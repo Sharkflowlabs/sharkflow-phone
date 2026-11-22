@@ -1,0 +1,17 @@
+{
+  "name": "sharkflow-phone",
+  "version": "1.0.0",
+  "description": "Texting and calling inbox for Sharkflow Labs on Twilio + Cloudflare",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:local": "wrangler d1 execute sharkflow-phone --local --file=schema.sql",
+    "test": "node test/smoke.mjs",
+    "deploy": "wrangler deploy",
+    "vendor": "cp node_modules/@twilio/voice-sdk/dist/twilio.min.js public/vendor/"
+  },
+  "devDependencies": {
+    "@twilio/voice-sdk": "2.18.5",
+    "wrangler": "4.160.0"
+  },
+  "private": true
+}

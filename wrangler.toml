@@ -1,0 +1,24 @@
+name = "sharkflow-phone"
+main = "src/worker.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/twilio/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sharkflow-phone"
+database_id = "a8b73e65-b207-4f14-8877-426f7fca70be"
+
+[vars]
+# Optional. Your own cell in E.164 (e.g. +919876543210). Incoming calls ring the browser and this number together.
+FORWARD_TO = ""
+OPT_OUT_LINE = "Reply STOP to opt out."
+VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Please leave your name, number and a short message after the tone."
+
+# Secrets (set with `wrangler secret put NAME` or the GitHub Action):
+# APP_PASSWORD, SESSION_SECRET, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER,
+# TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_TWIML_APP_SID
