@@ -98,4 +98,4 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   const tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.filter(i=>i.type==='activity').length===3,'activities on timeline');
   const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
-{ const r=await api('/api/assistant/extract',{method:'POST',body:{text:'Acme Roofing 555-111-2222'}}); ok(r.status===503,'assistant off without API key'); }
+{ const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400,'assistant asks for a screenshot or text'); }

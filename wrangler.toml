@@ -13,6 +13,10 @@ binding = "DB"
 database_name = "sharkflow-phone"
 database_id = "a8b73e65-b207-4f14-8877-426f7fca70be"
 
+# Workers AI powers the free lead assistant (screenshot -> prospect). No key needed.
+[ai]
+binding = "AI"
+
 [vars]
 # Optional. Your own cell in E.164 (e.g. +919876543210). Incoming calls ring the browser and this number together.
 FORWARD_TO = ""
@@ -27,4 +31,4 @@ VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Pl
 # Secrets (set with `wrangler secret put NAME` or the GitHub Action):
 # APP_PASSWORD, SESSION_SECRET, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER,
 # TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_TWIML_APP_SID
-# Optional: ANTHROPIC_API_KEY turns on the lead assistant (screenshot -> prospect).
+# Optional: ANTHROPIC_API_KEY makes the lead assistant use Claude (paid per use); Workers AI is then the backup.

@@ -211,7 +211,7 @@ async function handleApi(request, env, url) {
       lostReasons: LOST_REASONS,
       maxTouches: MAX_TOUCHES,
       outcomes: OUTCOMES,
-      assistantReady: Boolean(env.ANTHROPIC_API_KEY),
+      assistantReady: Boolean(env.AI || env.ANTHROPIC_API_KEY),
       pipelineStages: PIPELINE,
     });
   }
@@ -245,7 +245,7 @@ async function handleApi(request, env, url) {
 
   if (path === '/api/assistant/extract' && method === 'POST') {
     // Lead assistant: read screenshots / pasted text and return the prospect's details for review.
-    if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, 'The assistant needs an ANTHROPIC_API_KEY secret on the Worker.');
+    if (!env.AI && !env.ANTHROPIC_API_KEY) throw new HttpError(503, 'The assistant needs the Workers AI binding (or an ANTHROPIC_API_KEY secret) on the Worker.');
     const body = await readJson(request);
     const lead = await extractLead(env, body);
     return json({ lead, duplicates: await findDuplicates(db, lead) });
@@ -679,19 +679,66 @@ Copy details exactly as they appear. Leave a field as an empty string when it is
 If several businesses appear, describe the main one and mention the others in notes.`;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+// Free by default: Cloudflare Workers AI (daily free allowance, no key). If an ANTHROPIC_API_KEY secret is set,
+// Claude is used instead, and Workers AI becomes the backup if Claude fails.
+const WORKERS_AI_MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct';
+
 async function extractLead(env, body) {
   const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
   const text = String(body.text || '').trim().slice(0, 6000);
   if (!images.length && !text) throw new HttpError(400, 'Attach a screenshot or paste some details');
-  const content = [];
   for (const img of images) {
     if (!IMAGE_TYPES.includes(img.media_type) || typeof img.data !== 'string' || img.data.length > 6_000_000) {
       throw new HttpError(400, 'Images must be JPEG, PNG, WebP or GIF under 4 MB');
     }
-    content.push({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } });
   }
-  content.push({ type: 'text', text: text ? `Extra details from me:\n${text}` : 'Pull out this lead\'s details.' });
+  const ask = text ? `Extra details from me:\n${text}` : 'Pull out this lead\'s details.';
+  let data;
+  if (env.ANTHROPIC_API_KEY) {
+    try { data = await extractWithClaude(env, images, ask); }
+    catch (e) { if (!env.AI) throw e; data = await extractWithWorkersAi(env, images, ask); }
+  } else {
+    data = await extractWithWorkersAi(env, images, ask);
+  }
+  const lead = {};
+  for (const f of LEAD_FIELDS) lead[f] = String((data && data[f]) || '').trim().slice(0, f === 'notes' ? 1000 : 300);
+  lead.instagram = igHandle(lead.instagram) || lead.instagram.replace(/^@/, '');
+  lead.phone_normalized = normalizePhone(lead.phone);
+  return lead;
+}
 
+function parseLeadJson(raw) {
+  if (raw && typeof raw === 'object') return raw;
+  const str = String(raw || '');
+  try { return JSON.parse(str); } catch { /* fall through */ }
+  const m = str.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch { /* fall through */ } }
+  throw new HttpError(502, 'The assistant returned something unreadable. Try again.');
+}
+
+async function extractWithWorkersAi(env, images, ask) {
+  const content = [{ type: 'text', text: `${ask}\nReply with JSON only, with these keys: ${LEAD_FIELDS.join(', ')}.` }];
+  for (const img of images) content.push({ type: 'image_url', image_url: { url: `data:${img.media_type};base64,${img.data}` } });
+  let out;
+  try {
+    out = await env.AI.run(WORKERS_AI_MODEL, {
+      messages: [{ role: 'system', content: LEAD_SYSTEM }, { role: 'user', content }],
+      response_format: { type: 'json_schema', json_schema: LEAD_SCHEMA },
+      max_tokens: 1200,
+      temperature: 0,
+    });
+  } catch (e) {
+    const msg = String(e && e.message || e);
+    if (/4006|daily free allocation|neurons/i.test(msg)) throw new HttpError(429, 'Today\'s free AI allowance is used up. It resets at 5:30 AM India time.');
+    if (/429|3040|capacity/i.test(msg)) throw new HttpError(429, 'The assistant is busy. Try again in a minute.');
+    throw new HttpError(502, `The assistant failed: ${msg.slice(0, 200)}`);
+  }
+  return parseLeadJson(out && out.response !== undefined ? out.response : out);
+}
+
+async function extractWithClaude(env, images, ask) {
+  const content = images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } }));
+  content.push({ type: 'text', text: ask });
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   let response;
   try {
@@ -712,13 +759,7 @@ async function extractLead(env, body) {
   }
   if (response.stop_reason === 'refusal') throw new HttpError(422, 'The assistant could not read that one. Try a different screenshot.');
   const out = response.content.find((b) => b.type === 'text');
-  let data;
-  try { data = JSON.parse(out ? out.text : ''); } catch { throw new HttpError(502, 'The assistant returned something unreadable. Try again.'); }
-  const lead = {};
-  for (const f of LEAD_FIELDS) lead[f] = String(data[f] || '').trim().slice(0, f === 'notes' ? 1000 : 300);
-  lead.instagram = igHandle(lead.instagram) || lead.instagram.replace(/^@/, '');
-  lead.phone_normalized = normalizePhone(lead.phone);
-  return lead;
+  return parseLeadJson(out ? out.text : '');
 }
 
 async function findDuplicates(db, lead) {

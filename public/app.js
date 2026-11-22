@@ -858,7 +858,7 @@
     if (!$('aiLog').children.length) {
       aiLog(state.me.assistantReady
         ? 'Hi Sai. Send me a screenshot of a business (Google Maps, Instagram, Facebook, Yelp) or paste their details. I\'ll pull out the name, phone, Instagram and more, check it isn\'t already in your CRM, and add it to Prospects once you OK it.'
-        : 'The assistant isn\'t switched on yet. Add an ANTHROPIC_API_KEY secret to the sharkflow-phone Worker in Cloudflare, then refresh.', 'ai-msg bot');
+        : 'The assistant isn\'t switched on yet. The Worker needs its Workers AI binding; redeploy it, then refresh.', 'ai-msg bot');
     }
     $('aiText').focus();
   }
@@ -909,7 +909,7 @@
     if (ai.busy) return;
     const text = $('aiText').value.trim();
     if (!text && !ai.images.length) return;
-    if (!state.me.assistantReady) { aiLog('Add the ANTHROPIC_API_KEY secret first, then refresh.', 'ai-msg bot err'); return; }
+    if (!state.me.assistantReady) { aiLog('The assistant isn\'t switched on yet. Redeploy the Worker, then refresh.', 'ai-msg bot err'); return; }
     const images = ai.images; ai.images = []; renderThumbs(); $('aiText').value = '';
     aiLog(esc(text) + images.map((im) => `<img src="${im.url}" alt="">`).join(''), 'ai-msg me');
     const wait = aiLog('<span class="typing">Reading</span>', 'ai-msg bot');
