@@ -57,3 +57,12 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
 { const r=await fetch(B+'/public/optin',{method:'POST',headers:{'content-type':'application/json',origin:'https://sharkflowlabs.pages.dev'},body:JSON.stringify({phone:'5553334444',name:'Ann',business:'Ann Plumbing',consent:true,consent_text:'I agree'})});
   ok(r.status===200 && r.headers.get('access-control-allow-origin')==='https://sharkflowlabs.pages.dev','opt-in form accepted');
   const l=await api('/api/contacts?q=Ann'); const c=l.data.contacts[0]; ok(c && c.opt_in_channel==='Website form' && c.unread===1,'form creates opted-in unread lead'); }
+
+{ const H={'content-type':'application/json',origin:'https://sharkflowlabs.pages.dev'};
+  let r=await fetch(B+'/public/lead',{method:'POST',headers:H,body:JSON.stringify({phone:'5556667777',name:'Bob',agree_terms:false})}); ok(r.status===400,'quote form needs terms');
+  r=await fetch(B+'/public/lead',{method:'POST',headers:H,body:JSON.stringify({phone:'5556667777',name:'Bob',business:'Bob Roofing',email:'bob@x.com',trade:'Roofing',message:'Need a site',agree_terms:true,consent_contact:false})}); ok(r.status===200,'quote form accepted without contact consent');
+  let c=(await api('/api/contacts?q=Bob')).data.contacts[0]; ok(c && !c.opt_in_at && c.email==='bob@x.com' && c.notes.includes('Need a site'),'lead saved, texting stays locked');
+  r=await fetch(B+'/public/lead',{method:'POST',headers:H,body:JSON.stringify({phone:'+44 7700 900123',name:'Uk',business:'UK Plumb',agree_terms:true,consent_contact:true,consent_text:'ok to text'})});
+  c=(await api('/api/contacts?q=UK%20Plumb')).data.contacts[0]; ok(r.status===200 && c && c.phone==='+447700900123' && c.opt_in_channel==='Website form','UK lead with consent logged as opt-in');
+  r=await fetch(B+'/public/lead',{method:'POST',headers:H,body:JSON.stringify({phone:'5551112222',agree_terms:true,company_website_hp:'spam'})});
+  ok(r.status===200 && !(await api('/api/contacts?q=5551112222')).data.contacts.length,'honeypot drops bots'); }

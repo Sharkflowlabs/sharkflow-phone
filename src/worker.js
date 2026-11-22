@@ -17,7 +17,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/twilio/')) return await handleTwilio(request, env, url);
-      if (url.pathname === '/public/optin') return await handlePublicOptIn(request, env);
+      if (url.pathname === '/public/optin' || url.pathname === '/public/lead') return await handlePublicLead(request, env, url);
       if (url.pathname.startsWith('/api/')) return await handleApi(request, env, url);
       return env.ASSETS.fetch(request);
     } catch (err) {
@@ -431,30 +431,78 @@ function allowedOrigin(request, env) {
   return list.includes(origin) ? origin : null;
 }
 
-async function handlePublicOptIn(request, env) {
+async function handlePublicLead(request, env, url) {
   const origin = allowedOrigin(request, env);
   const cors = origin ? { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', vary: 'origin' } : {};
   if (request.method === 'OPTIONS') return new Response(null, { status: origin ? 204 : 403, headers: cors });
   if (request.method !== 'POST' || !origin) return json({ error: 'Not allowed' }, 403, cors);
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Bad request' }, 400, cors); }
-  if (body.consent !== true) return json({ error: 'Please tick the box to agree to texts' }, 400, cors);
+  if (body.company_website_hp) return json({ ok: true }, 200, cors); // honeypot: bots fill hidden fields
+  // The older text-only form sends `consent`; the quote form sends agree_terms + optional consent_contact.
+  const legacy = url.pathname === '/public/optin';
+  const agreed = legacy ? body.consent === true : body.agree_terms === true;
+  const contactConsent = legacy ? body.consent === true : body.consent_contact === true;
+  if (!agreed) return json({ error: legacy ? 'Please tick the box to agree to texts' : 'Please agree to the Privacy Policy and Terms' }, 400, cors);
   const phone = normalizePhone(body.phone);
-  if (!phone) return json({ error: 'Please enter a valid mobile number' }, 400, cors);
+  if (!phone) return json({ error: 'Please enter a valid phone number (add +44 for UK numbers)' }, 400, cors);
   const s = (v, n) => String(v ?? '').trim().slice(0, n);
-  const name = s(body.name, 120), business = s(body.business, 160);
+  const lead = {
+    name: s(body.name, 120), business: s(body.business, 160), email: s(body.email, 200),
+    website: s(body.website, 300), trade: s(body.trade, 80), message: s(body.message, 2000),
+  };
+  if (lead.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) return json({ error: 'Please check your email address' }, 400, cors);
   const ts = nowIso();
-  const note = `Website form: "${s(body.consent_text, 600)}"`;
+  const day = ts.slice(0, 10);
+  const consentNote = contactConsent ? `${legacy ? 'Text form' : 'Website quote form'}: "${s(body.consent_text, 600)}"` : '';
+  const noteLine = [`${day} website form`, lead.trade && `Trade: ${lead.trade}`, lead.message && `Message: ${lead.message}`].filter(Boolean).join(' | ');
   const db = env.DB;
-  await db.prepare(`INSERT INTO contacts (phone, name, business, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes)
-      VALUES (?, ?, ?, 'Leads', ?, 'Website form', ?, 1, ?, 'Asked for a demo on the website form.')
+  await db.prepare(`INSERT INTO contacts (phone, name, business, email, website, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes)
+      VALUES (?, ?, ?, ?, ?, 'Leads', ?, ?, ?, 1, ?, ?)
     ON CONFLICT(phone) DO UPDATE SET
       name = CASE WHEN contacts.name = '' THEN excluded.name ELSE contacts.name END,
       business = CASE WHEN contacts.business = '' THEN excluded.business ELSE contacts.business END,
-      opt_in_at = excluded.opt_in_at, opt_in_channel = excluded.opt_in_channel, opt_in_note = excluded.opt_in_note,
+      email = CASE WHEN contacts.email = '' THEN excluded.email ELSE contacts.email END,
+      website = CASE WHEN contacts.website = '' THEN excluded.website ELSE contacts.website END,
+      opt_in_at = COALESCE(excluded.opt_in_at, contacts.opt_in_at),
+      opt_in_channel = CASE WHEN excluded.opt_in_at IS NOT NULL THEN excluded.opt_in_channel ELSE contacts.opt_in_channel END,
+      opt_in_note = CASE WHEN excluded.opt_in_at IS NOT NULL THEN excluded.opt_in_note ELSE contacts.opt_in_note END,
+      notes = CASE WHEN contacts.notes = '' THEN excluded.notes ELSE contacts.notes || char(10) || excluded.notes END,
       unread = contacts.unread + 1, last_activity_at = excluded.last_activity_at`)
-    .bind(phone, name, business, ts.slice(0, 10), note, ts).run();
+    .bind(phone, lead.name, lead.business, lead.email, lead.website,
+      contactConsent ? day : null, contactConsent ? 'Website form' : '', consentNote, ts, noteLine).run();
+  await emailLead(env, { ...lead, phone, contactConsent, ts }).catch((e) => console.error('lead email failed', e));
   return json({ ok: true }, 200, cors);
+}
+
+// Emails each website lead to you through Cloudflare Email Routing (send_email binding LEAD_MAIL).
+async function emailLead(env, lead) {
+  if (!env.LEAD_MAIL || !env.LEAD_EMAIL_TO || !env.LEAD_EMAIL_FROM) return;
+  const { EmailMessage } = await import('cloudflare:email');
+  const clean = (v) => String(v || '').replace(/[\r\n]+/g, ' ');
+  const lines = [
+    `New website lead (${lead.ts})`, '',
+    `Name: ${lead.name}`, `Business: ${lead.business}`, `Trade: ${lead.trade}`,
+    `Phone: ${lead.phone}`, `Email: ${lead.email}`, `Website: ${lead.website}`, '',
+    `Message:`, lead.message || '(none)', '',
+    `Agreed to Privacy Policy and Terms: yes`,
+    `OK to text and call: ${lead.contactConsent ? 'YES (logged as opt-in in Sharkflow Phone)' : 'no, do not text'}`,
+  ];
+  const subject = `New lead: ${clean(lead.business || lead.name || lead.phone)}`;
+  const raw = [
+    `From: Sharkflow Labs website <${env.LEAD_EMAIL_FROM}>`,
+    `To: <${env.LEAD_EMAIL_TO}>`,
+    ...(lead.email ? [`Reply-To: <${clean(lead.email)}>`] : []),
+    `Subject: ${subject}`,
+    `Message-ID: <${crypto.randomUUID()}@${env.LEAD_EMAIL_FROM.split('@')[1]}>`,
+    `Date: ${new Date().toUTCString()}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    lines.join('\r\n'),
+  ].join('\r\n');
+  await env.LEAD_MAIL.send(new EmailMessage(env.LEAD_EMAIL_FROM, env.LEAD_EMAIL_TO, raw));
 }
 
 // ---------- Twilio webhooks ----------
