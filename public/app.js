@@ -2,7 +2,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = {
-    me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', q: '',
+    me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', source: '', q: '',
     pipeline: [], tasks: [], stats: {}, boardQ: '', showLost: false,
     queue: [], qi: 0, queueFilter: 'due', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
@@ -94,6 +94,9 @@
     const opts = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
     $('stageFilter').insertAdjacentHTML('beforeend', opts);
     $('fStage').innerHTML = opts; $('newStage').innerHTML = opts;
+    const srcOpts = (state.me.sources || []).map((x) => `<option>${esc(x)}</option>`).join('');
+    $('fSource').insertAdjacentHTML('beforeend', srcOpts); $('newSource').insertAdjacentHTML('beforeend', srcOpts);
+    $('sourceFilter').insertAdjacentHTML('beforeend', srcOpts + '<option value="(none)">Not set</option>');
     $('fLost').insertAdjacentHTML('beforeend', state.me.lostReasons.map((s) => `<option>${esc(s)}</option>`).join(''));
     $('oiChannel').innerHTML = '<option value="">Pick one</option>' + state.me.optInChannels.map((s) => `<option>${esc(s)}</option>`).join('');
     $('optOutText').textContent = state.me.optOutLine;
@@ -277,7 +280,7 @@
     const t = today();
     const q = state.boardQ.toLowerCase();
     const stages = state.me.stages.filter((s) => state.showLost || s !== 'Lost');
-    const list = state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step].join(' ').toLowerCase().includes(q));
+    const list = state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step, c.source].join(' ').toLowerCase().includes(q));
     const pipeTotal = state.pipeline.filter((c) => state.me.pipelineStages.includes(c.stage)).reduce((n, c) => n + (c.value || 0), 0);
     $('boardSub').textContent = `Pipeline ${money(pipeTotal)} (Interested + In build) · drag a card to move it`;
     $('boardCols').innerHTML = stages.map((s) => {
@@ -346,6 +349,7 @@
     const params = new URLSearchParams({ today: today() });
     if (state.view) params.set('view', state.view);
     if (state.stage) params.set('stage', state.stage);
+    if (state.source) params.set('source', state.source);
     if (state.q) params.set('q', state.q);
     const data = await api('/api/contacts?' + params);
     state.contacts = data.contacts; setCounts(data.counts);
@@ -360,12 +364,13 @@
         <td><div class="name-cell">${avatar(c, 'sm')}<div><a href="#c/${c.id}" class="cname">${esc(displayName(c))}</a>${c.hot ? ' <span class="tag hot">Hot</span>' : ''}${c.unread ? ' <span class="tag due">New text</span>' : ''}
           <div class="muted">${esc(c.last_body ? (c.last_direction === 'out' ? 'You: ' : '') + c.last_body : (c.instagram ? '@' + c.instagram : c.email || ''))}</div></div></div></td>
         <td>${stagePill(c.stage)}</td>
+        <td class="hide-s">${c.source ? esc(c.source) : '<span class="muted">-</span>'}</td>
         <td class="num hide-s">${c.value ? money(c.value) : '<span class="muted">-</span>'}</td>
         <td class="hide-s">${esc(fmtPhone(c.phone)) || '<span class="muted">-</span>'}</td>
         <td>${c.next_follow_up ? `<span class="${due ? 'late' : ''}">${esc(shortDate(c.next_follow_up))}</span>` : '<span class="muted">-</span>'}</td>
         <td class="hide-s muted">${esc(when(c.last_activity_at || c.updated_at))}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6" class="empty-row">No contacts here.</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="empty-row">No contacts here.</td></tr>';
   }
   $('contactRows').addEventListener('click', (e) => {
     if (e.target.closest('a')) return;
@@ -376,6 +381,7 @@
     state.view = b.dataset.view; loadContacts();
   }));
   $('stageFilter').addEventListener('change', (e) => { state.stage = e.target.value; loadContacts(); });
+  $('sourceFilter').addEventListener('change', (e) => { state.source = e.target.value; loadContacts(); });
   let searchTimer;
   $('search').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
@@ -412,7 +418,7 @@
     $('igBtn').classList.toggle('disabled', !c.instagram); $('igBtn').href = c.instagram ? igUrl(c.instagram) : '#';
     $('mailBtn').classList.toggle('disabled', !c.email); $('mailBtn').href = c.email ? `mailto:${c.email}` : '#';
     $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone || '';
-    $('fEmail').value = c.email; $('fWebsite').value = c.website; $('fInstagram').value = c.instagram; $('fNotes').value = c.notes;
+    $('fEmail').value = c.email; $('fWebsite').value = c.website; $('fInstagram').value = c.instagram; $('fSource').value = c.source || ''; $('fNotes').value = c.notes;
     $('optedOutBanner').hidden = !c.opted_out;
     const locked = !c.opt_in_at && !c.opted_out && Boolean(c.phone);
     $('optInForm').hidden = !locked;
@@ -506,7 +512,7 @@
   }
 
   // Autosave contact fields.
-  const fieldMap = { fStage: 'stage', fFollow: 'next_follow_up', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fNotes: 'notes' };
+  const fieldMap = { fStage: 'stage', fFollow: 'next_follow_up', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fSource: 'source', fNotes: 'notes' };
   async function saveField(key, value) {
     if (!state.current) return;
     $('saveState').textContent = 'Saving…';
@@ -733,7 +739,7 @@
     phone: ['phone', 'phone number', 'mobile', 'number', 'cell'], name: ['name', 'owner', 'contact', 'contact name', 'first name'],
     business: ['business', 'business name', 'company', 'company name'], email: ['email', 'e-mail'], website: ['website', 'site', 'url'],
     instagram: ['instagram', 'ig', 'instagram handle', 'handle', 'instagram url'], stage: ['stage', 'status'], notes: ['notes', 'note'],
-    value: ['value', 'deal value', 'price', 'amount'],
+    value: ['value', 'deal value', 'price', 'amount'], source: ['source', 'lead source', 'found on', 'found via'],
   };
   $('importBtn').addEventListener('click', () => { $('importForm').reset(); $('importResult').textContent = ''; $('importDialog').showModal(); });
   $('importForm').addEventListener('submit', async (e) => {
@@ -928,7 +934,7 @@
     const li = aiLog(`<div class="row between"><b>Here's what I found</b><span class="muted small">Check it, then add</span></div>
       <div class="grid2">${f('business', 'Business', true)}${f('name', 'Contact')}${f('phone', 'Phone')}${f('instagram', 'Instagram')}${f('email', 'Email')}${f('website', 'Website')}${f('trade', 'Trade')}${f('city', 'City', true)}</div>
       <label>Notes<textarea data-k="notes" rows="3">${esc(lead.notes)}</textarea></label>
-      <div class="grid2"><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'Prospects' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label>Amount ($)<input data-k="value" inputmode="numeric"></label></div>
+      <div class="grid2"><label>Lead source<select data-k="source"><option value="">Not set</option>${(state.me.sources || []).map((x) => `<option ${x === lead.source ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'Prospects' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label style="grid-column:1/-1">Amount ($)<input data-k="value" inputmode="numeric"></label></div>
       ${dupHtml}
       <div class="row end"><button type="button" class="btn small" data-act="skip">Discard</button><button type="button" class="btn primary small" data-act="add">${dups.length ? 'Add anyway' : 'Add to CRM'}</button></div>`, 'ai-card');
     li.addEventListener('click', async (e) => {
@@ -936,7 +942,7 @@
       if (b.dataset.act === 'skip') { li.remove(); aiLog('Discarded.', 'ai-msg bot'); return; }
       const v = Object.fromEntries([...li.querySelectorAll('[data-k]')].map((x) => [x.dataset.k, x.value.trim()]));
       const head = [v.trade, v.city].filter(Boolean).join(' · ');
-      const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, email: v.email, website: v.website,
+      const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, email: v.email, website: v.website, source: v.source,
         stage: v.stage, value: v.value, next_follow_up: today(), notes: [head, v.notes, 'Added by the lead assistant ' + today()].filter(Boolean).join('\n') };
       b.disabled = true;
       try {

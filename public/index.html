@@ -175,11 +175,12 @@
             <div class="filters">
               <input id="search" type="search" placeholder="Search name, business, number, Instagram">
               <select id="stageFilter" aria-label="Filter by stage"><option value="">All stages</option></select>
+              <select id="sourceFilter" aria-label="Filter by lead source"><option value="">All sources</option></select>
             </div>
           </div>
           <div class="table-wrap">
             <table class="ctable">
-              <thead><tr><th>Name</th><th>Stage</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next follow-up</th><th class="hide-s">Last activity</th></tr></thead>
+              <thead><tr><th>Name</th><th>Stage</th><th class="hide-s">Source</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next follow-up</th><th class="hide-s">Last activity</th></tr></thead>
               <tbody id="contactRows"></tbody>
             </table>
           </div>
@@ -211,6 +212,7 @@
               <label>Email<input id="fEmail" type="email"></label>
               <label>Website<input id="fWebsite"></label>
               <label>Instagram<input id="fInstagram"></label>
+              <label>Lead source<select id="fSource"><option value="">Not set</option></select></label>
               <label>Notes<textarea id="fNotes" rows="4"></textarea></label>
               <div class="optin-record" id="optInRecord" hidden>
                 <span class="muted">Opted in to texts</span>
@@ -324,6 +326,7 @@
       <label>Instagram<input name="instagram" placeholder="@handle or link"></label>
       <label>Phone<input name="phone" type="tel" placeholder="(555) 123-4567 or +61…"></label>
       <label>Email<input name="email" type="email"></label>
+      <label>Lead source<select name="source" id="newSource"><option value="">Not set</option></select></label>
       <div class="optin-grid">
         <label>Stage<select name="stage" id="newStage"></select></label>
         <label>Amount ($)<input name="value" inputmode="numeric"></label>

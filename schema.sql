@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   email TEXT NOT NULL DEFAULT '',
   website TEXT NOT NULL DEFAULT '',
   instagram TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',       -- where the lead was found: Instagram, Google Maps, BBB, ...
   stage TEXT NOT NULL DEFAULT 'Prospects',
   next_follow_up TEXT,                   -- YYYY-MM-DD or NULL
   notes TEXT NOT NULL DEFAULT '',

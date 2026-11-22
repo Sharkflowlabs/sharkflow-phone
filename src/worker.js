@@ -5,6 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const STAGES = [
   'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'LTO', 'Lost',
 ];
+const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'Other'];
 const FIRST = 'Prospects';
 const ATC = 'Attempt to connect';
 // Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
@@ -213,6 +214,7 @@ async function handleApi(request, env, url) {
       outcomes: OUTCOMES,
       assistantReady: Boolean(env.AI || env.ANTHROPIC_API_KEY),
       pipelineStages: PIPELINE,
+      sources: SOURCES,
     });
   }
 
@@ -237,7 +239,7 @@ async function handleApi(request, env, url) {
 
   if (path === '/api/pipeline' && method === 'GET') {
     const { results } = await db.prepare(`
-      SELECT id, name, business, phone, email, website, instagram, stage, value, hot, touches, last_touch, next_step, next_follow_up,
+      SELECT id, name, business, phone, email, website, instagram, source, stage, value, hot, touches, last_touch, next_step, next_follow_up,
         stage_since, deadline, lost_reason, unread, last_activity_at, created_at
       FROM contacts ORDER BY hot DESC, COALESCE(next_follow_up, '9999') ASC, updated_at DESC LIMIT 2000`).all();
     return json({ contacts: results });
@@ -264,7 +266,7 @@ async function handleApi(request, env, url) {
       if (!handle) { skipped++; continue; }
       const exists = await db.prepare('SELECT 1 FROM contacts WHERE lower(instagram) = ?').bind(handle).first();
       if (exists) { skipped++; continue; }
-      await db.prepare('INSERT INTO contacts (name, instagram, stage, stage_since) VALUES (?, ?, ?, ?)')
+      await db.prepare('INSERT INTO contacts (name, instagram, stage, stage_since, source) VALUES (?, ?, ?, ?, \'Instagram\')')
         .bind(rest.join(' ').trim().slice(0, 200) || handle, handle, st, today).run();
       added++;
     }
@@ -389,6 +391,9 @@ async function handleApi(request, env, url) {
     const view = url.searchParams.get('view');
     const today = url.searchParams.get('today') || nowIso().slice(0, 10);
     if (stage) { where.push('c.stage = ?'); args.push(stage); }
+    const source = url.searchParams.get('source');
+    if (source === '(none)') where.push("c.source = ''");
+    else if (source) { where.push('c.source = ?'); args.push(source); }
     if (q) {
       where.push('(c.name LIKE ? OR c.business LIKE ? OR c.phone LIKE ? OR c.notes LIKE ? OR c.instagram LIKE ? OR c.email LIKE ?)');
       const like = `%${q}%`;
@@ -442,7 +447,8 @@ async function handleApi(request, env, url) {
       const before = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
       if (!before) throw new HttpError(404, 'Not found');
       if ('instagram' in body) body.instagram = igHandle(body.instagram) || String(body.instagram || '').trim();
-      const fields = ['name', 'business', 'email', 'website', 'instagram', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
+      if ('source' in body) body.source = cleanSource(body.source);
+      const fields = ['name', 'business', 'email', 'website', 'instagram', 'source', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
       const sets = [];
       const args = [];
       for (const f of fields) {
@@ -614,6 +620,13 @@ function optOutLine(env) {
   return env.OPT_OUT_LINE || 'Reply STOP to opt out.';
 }
 
+// Lead source: one of SOURCES (matched case-insensitively), anything else becomes "Other", blank stays blank.
+function cleanSource(v) {
+  const t = String(v ?? '').trim();
+  if (!t) return '';
+  return SOURCES.find((x) => x.toLowerCase() === t.toLowerCase()) || 'Other';
+}
+
 async function createContact(db, body) {
   const hasPhone = String(body.phone ?? '').trim() !== '';
   const phone = hasPhone ? normalizePhone(body.phone) : null;
@@ -627,10 +640,10 @@ async function createContact(db, body) {
   const followUp = isDate(body.next_follow_up) ? body.next_follow_up : null;
   const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
-    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
       .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), instagram, stage, followUp, s(body.notes),
-        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10))
+        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10), cleanSource(body.source))
       .first();
   } catch (e) {
     if (String(e).includes('UNIQUE')) throw new HttpError(409, 'A contact with that number already exists');
@@ -657,7 +670,7 @@ async function logTouchFor(db, c, today, note) {
       .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), c.id).first();
 }
 
-const LEAD_FIELDS = ['business', 'name', 'phone', 'email', 'website', 'instagram', 'trade', 'city', 'notes'];
+const LEAD_FIELDS = ['business', 'name', 'phone', 'email', 'website', 'instagram', 'trade', 'city', 'notes', 'source'];
 const LEAD_SCHEMA = {
   type: 'object',
   properties: {
@@ -670,13 +683,15 @@ const LEAD_SCHEMA = {
     trade: { type: 'string', description: 'What they do, e.g. Roofing, House painting' },
     city: { type: 'string', description: 'City and state or region' },
     notes: { type: 'string', description: 'One or two short lines useful for a website sales pitch: rating and review count, whether they have a website, services, anything notable' },
+    source: { type: 'string', enum: SOURCES, description: 'Where the screenshot comes from: Instagram profile, Google Maps listing or Google Business profile, Google Search results, BBB (Better Business Bureau) page, the business website, Facebook, Yelp. Use Other if unclear' },
   },
   required: LEAD_FIELDS,
   additionalProperties: false,
 };
 const LEAD_SYSTEM = `You read screenshots and pasted text about local service businesses (Google Business profiles, Google Maps listings, Instagram profiles, Facebook pages, Yelp, websites) and pull out the details needed to add the business as a sales prospect.
 Copy details exactly as they appear. Leave a field as an empty string when it isn't visible; never guess a phone number, email or handle.
-If several businesses appear, describe the main one and mention the others in notes.`;
+If several businesses appear, describe the main one and mention the others in notes.
+For source, judge from the page's look and layout (Instagram profile grid, Google Maps panel with stars and directions, BBB rating and accreditation badge, and so on).`;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 // Free by default: Cloudflare Workers AI (daily free allowance, no key). If an ANTHROPIC_API_KEY secret is set,
@@ -703,6 +718,7 @@ async function extractLead(env, body) {
   const lead = {};
   for (const f of LEAD_FIELDS) lead[f] = String((data && data[f]) || '').trim().slice(0, f === 'notes' ? 1000 : 300);
   lead.instagram = igHandle(lead.instagram) || lead.instagram.replace(/^@/, '');
+  lead.source = cleanSource(lead.source);
   lead.phone_normalized = normalizePhone(lead.phone);
   return lead;
 }
@@ -846,8 +862,8 @@ async function handlePublicLead(request, env, url) {
   const consentNote = contactConsent ? `${legacy ? 'Text form' : 'Website quote form'}: "${s(body.consent_text, 600)}"` : '';
   const noteLine = [`${day} website form`, lead.trade && `Trade: ${lead.trade}`, lead.message && `Message: ${lead.message}`].filter(Boolean).join(' | ');
   const db = env.DB;
-  await db.prepare(`INSERT INTO contacts (phone, name, business, email, website, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes)
-      VALUES (?, ?, ?, ?, ?, 'Prospects', ?, ?, ?, 1, ?, ?)
+  await db.prepare(`INSERT INTO contacts (phone, name, business, email, website, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes, source)
+      VALUES (?, ?, ?, ?, ?, 'Prospects', ?, ?, ?, 1, ?, ?, 'Inbound form')
     ON CONFLICT(phone) DO UPDATE SET
       name = CASE WHEN contacts.name = '' THEN excluded.name ELSE contacts.name END,
       business = CASE WHEN contacts.business = '' THEN excluded.business ELSE contacts.business END,
