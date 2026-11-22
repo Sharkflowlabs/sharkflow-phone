@@ -19,6 +19,8 @@ FORWARD_TO = ""
 # Record every answered call (both sides). The other person hears RECORDING_NOTICE first.
 RECORD_CALLS = "true"
 RECORDING_NOTICE = "This call may be recorded."
+# Websites allowed to post the public "text me my demo" form.
+OPTIN_ORIGINS = "https://sharkflowlabs.pages.dev"
 OPT_OUT_LINE = "Reply STOP to opt out."
 VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Please leave your name, number and a short message after the tone."
 

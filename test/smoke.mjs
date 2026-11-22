@@ -51,3 +51,9 @@ const t=await api('/api/voice-token'); const [h,p,s]=t.data.token.split('.'); co
 const pl=JSON.parse(Buffer.from(p,'base64url')); ok(s===exp && pl.grants.voice.outgoing.application_sid==='AP_test' && pl.grants.identity==='owner','voice token signed correctly');
 ok((await fetch(B+'/').then(r=>r.text())).includes('Sharkflow Phone'),'UI served');
 ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
+
+{ const r=await fetch(B+'/public/optin',{method:'POST',headers:{'content-type':'application/json',origin:'https://evil.example'},body:JSON.stringify({phone:'5553334444',consent:true})}); ok(r.status===403,'opt-in form rejects other sites'); }
+{ const r=await fetch(B+'/public/optin',{method:'POST',headers:{'content-type':'application/json',origin:'https://sharkflowlabs.pages.dev'},body:JSON.stringify({phone:'5553334444',name:'Ann',business:'Ann Plumbing',consent:false})}); ok(r.status===400,'opt-in form needs consent'); }
+{ const r=await fetch(B+'/public/optin',{method:'POST',headers:{'content-type':'application/json',origin:'https://sharkflowlabs.pages.dev'},body:JSON.stringify({phone:'5553334444',name:'Ann',business:'Ann Plumbing',consent:true,consent_text:'I agree'})});
+  ok(r.status===200 && r.headers.get('access-control-allow-origin')==='https://sharkflowlabs.pages.dev','opt-in form accepted');
+  const l=await api('/api/contacts?q=Ann'); const c=l.data.contacts[0]; ok(c && c.opt_in_channel==='Website form' && c.unread===1,'form creates opted-in unread lead'); }

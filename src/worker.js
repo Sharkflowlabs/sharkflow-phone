@@ -17,6 +17,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/twilio/')) return await handleTwilio(request, env, url);
+      if (url.pathname === '/public/optin') return await handlePublicOptIn(request, env);
       if (url.pathname.startsWith('/api/')) return await handleApi(request, env, url);
       return env.ASSETS.fetch(request);
     } catch (err) {
@@ -420,6 +421,40 @@ async function voiceToken(env) {
   const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
   const sig = b64url(await hmac('SHA-256', env.TWILIO_API_KEY_SECRET, unsigned));
   return `${unsigned}.${sig}`;
+}
+
+// ---------- public opt-in form (on the Sharkflow Labs website) ----------
+
+function allowedOrigin(request, env) {
+  const origin = request.headers.get('origin') || '';
+  const list = String(env.OPTIN_ORIGINS || 'https://sharkflowlabs.pages.dev').split(',').map((x) => x.trim()).filter(Boolean);
+  return list.includes(origin) ? origin : null;
+}
+
+async function handlePublicOptIn(request, env) {
+  const origin = allowedOrigin(request, env);
+  const cors = origin ? { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', vary: 'origin' } : {};
+  if (request.method === 'OPTIONS') return new Response(null, { status: origin ? 204 : 403, headers: cors });
+  if (request.method !== 'POST' || !origin) return json({ error: 'Not allowed' }, 403, cors);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Bad request' }, 400, cors); }
+  if (body.consent !== true) return json({ error: 'Please tick the box to agree to texts' }, 400, cors);
+  const phone = normalizePhone(body.phone);
+  if (!phone) return json({ error: 'Please enter a valid mobile number' }, 400, cors);
+  const s = (v, n) => String(v ?? '').trim().slice(0, n);
+  const name = s(body.name, 120), business = s(body.business, 160);
+  const ts = nowIso();
+  const note = `Website form: "${s(body.consent_text, 600)}"`;
+  const db = env.DB;
+  await db.prepare(`INSERT INTO contacts (phone, name, business, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes)
+      VALUES (?, ?, ?, 'Leads', ?, 'Website form', ?, 1, ?, 'Asked for a demo on the website form.')
+    ON CONFLICT(phone) DO UPDATE SET
+      name = CASE WHEN contacts.name = '' THEN excluded.name ELSE contacts.name END,
+      business = CASE WHEN contacts.business = '' THEN excluded.business ELSE contacts.business END,
+      opt_in_at = excluded.opt_in_at, opt_in_channel = excluded.opt_in_channel, opt_in_note = excluded.opt_in_note,
+      unread = contacts.unread + 1, last_activity_at = excluded.last_activity_at`)
+    .bind(phone, name, business, ts.slice(0, 10), note, ts).run();
+  return json({ ok: true }, 200, cors);
 }
 
 // ---------- Twilio webhooks ----------
