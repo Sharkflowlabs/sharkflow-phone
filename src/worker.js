@@ -1,4 +1,5 @@
 // Sharkflow Phone: a one-person texting + calling inbox on Twilio and Cloudflare.
+import Anthropic from '@anthropic-ai/sdk';
 // One Worker serves the UI (from /public), a JSON API under /api, and Twilio webhooks under /twilio.
 
 const STAGES = [
@@ -210,6 +211,7 @@ async function handleApi(request, env, url) {
       lostReasons: LOST_REASONS,
       maxTouches: MAX_TOUCHES,
       outcomes: OUTCOMES,
+      assistantReady: Boolean(env.ANTHROPIC_API_KEY),
       pipelineStages: PIPELINE,
     });
   }
@@ -239,6 +241,14 @@ async function handleApi(request, env, url) {
         stage_since, deadline, lost_reason, unread, last_activity_at, created_at
       FROM contacts ORDER BY hot DESC, COALESCE(next_follow_up, '9999') ASC, updated_at DESC LIMIT 2000`).all();
     return json({ contacts: results });
+  }
+
+  if (path === '/api/assistant/extract' && method === 'POST') {
+    // Lead assistant: read screenshots / pasted text and return the prospect's details for review.
+    if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, 'The assistant needs an ANTHROPIC_API_KEY secret on the Worker.');
+    const body = await readJson(request);
+    const lead = await extractLead(env, body);
+    return json({ lead, duplicates: await findDuplicates(db, lead) });
   }
 
   if (path === '/api/prospects' && method === 'POST') {
@@ -645,6 +655,81 @@ async function logTouchFor(db, c, today, note) {
     return db.prepare(`UPDATE contacts SET touches = ?, last_touch = ?, stage = ?, lost_reason = ?, next_follow_up = ?,
       stage_since = CASE WHEN stage = ? THEN stage_since ELSE ? END, notes = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
       .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), c.id).first();
+}
+
+const LEAD_FIELDS = ['business', 'name', 'phone', 'email', 'website', 'instagram', 'trade', 'city', 'notes'];
+const LEAD_SCHEMA = {
+  type: 'object',
+  properties: {
+    business: { type: 'string', description: 'Business name' },
+    name: { type: 'string', description: 'Owner or contact person, if shown' },
+    phone: { type: 'string', description: 'Phone number exactly as shown, with country code if shown' },
+    email: { type: 'string' },
+    website: { type: 'string', description: 'Website domain or URL, not an Instagram link' },
+    instagram: { type: 'string', description: 'Instagram handle without @' },
+    trade: { type: 'string', description: 'What they do, e.g. Roofing, House painting' },
+    city: { type: 'string', description: 'City and state or region' },
+    notes: { type: 'string', description: 'One or two short lines useful for a website sales pitch: rating and review count, whether they have a website, services, anything notable' },
+  },
+  required: LEAD_FIELDS,
+  additionalProperties: false,
+};
+const LEAD_SYSTEM = `You read screenshots and pasted text about local service businesses (Google Business profiles, Google Maps listings, Instagram profiles, Facebook pages, Yelp, websites) and pull out the details needed to add the business as a sales prospect.
+Copy details exactly as they appear. Leave a field as an empty string when it isn't visible; never guess a phone number, email or handle.
+If several businesses appear, describe the main one and mention the others in notes.`;
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+async function extractLead(env, body) {
+  const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
+  const text = String(body.text || '').trim().slice(0, 6000);
+  if (!images.length && !text) throw new HttpError(400, 'Attach a screenshot or paste some details');
+  const content = [];
+  for (const img of images) {
+    if (!IMAGE_TYPES.includes(img.media_type) || typeof img.data !== 'string' || img.data.length > 6_000_000) {
+      throw new HttpError(400, 'Images must be JPEG, PNG, WebP or GIF under 4 MB');
+    }
+    content.push({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } });
+  }
+  content.push({ type: 'text', text: text ? `Extra details from me:\n${text}` : 'Pull out this lead\'s details.' });
+
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  let response;
+  try {
+    response = await client.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 4000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: LEAD_SYSTEM,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: LEAD_SCHEMA } },
+      messages: [{ role: 'user', content }],
+    });
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) throw new HttpError(502, 'The Anthropic API key was rejected. Check the ANTHROPIC_API_KEY secret.');
+    if (e instanceof Anthropic.RateLimitError) throw new HttpError(429, 'The assistant is busy. Try again in a minute.');
+    if (e instanceof Anthropic.APIError) throw new HttpError(502, `The assistant failed: ${e.message}`);
+    throw e;
+  }
+  if (response.stop_reason === 'refusal') throw new HttpError(422, 'The assistant could not read that one. Try a different screenshot.');
+  const out = response.content.find((b) => b.type === 'text');
+  let data;
+  try { data = JSON.parse(out ? out.text : ''); } catch { throw new HttpError(502, 'The assistant returned something unreadable. Try again.'); }
+  const lead = {};
+  for (const f of LEAD_FIELDS) lead[f] = String(data[f] || '').trim().slice(0, f === 'notes' ? 1000 : 300);
+  lead.instagram = igHandle(lead.instagram) || lead.instagram.replace(/^@/, '');
+  lead.phone_normalized = normalizePhone(lead.phone);
+  return lead;
+}
+
+async function findDuplicates(db, lead) {
+  const where = [], args = [];
+  if (lead.phone_normalized) { where.push('phone = ?'); args.push(lead.phone_normalized); }
+  if (lead.instagram) { where.push('lower(instagram) = ?'); args.push(lead.instagram.toLowerCase()); }
+  if (lead.email) { where.push('lower(email) = ?'); args.push(lead.email.toLowerCase()); }
+  if (lead.business && lead.business.length >= 4) { where.push('lower(business) = ?'); args.push(lead.business.toLowerCase()); }
+  if (!where.length) return [];
+  const { results } = await db.prepare(`SELECT id, business, name, phone, instagram, stage FROM contacts WHERE ${where.join(' OR ')} LIMIT 5`).bind(...args).all();
+  return results;
 }
 
 // Move a deal to a new stage: stamp the date, add that stage's tasks, set a delivery deadline when a build starts.

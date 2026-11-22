@@ -27,3 +27,4 @@ VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Pl
 # Secrets (set with `wrangler secret put NAME` or the GitHub Action):
 # APP_PASSWORD, SESSION_SECRET, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER,
 # TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_TWIML_APP_SID
+# Optional: ANTHROPIC_API_KEY turns on the lead assistant (screenshot -> prospect).

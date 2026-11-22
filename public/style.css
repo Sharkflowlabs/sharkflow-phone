@@ -370,3 +370,36 @@ dialog::backdrop { background: rgba(0, 0, 0, .7); }
   .callbar { bottom: 76px; }
   .toast { bottom: 80px; left: 16px; right: 16px; }
 }
+
+/* lead assistant */
+.ai-fab { position: fixed; right: 20px; bottom: 20px; z-index: 15; display: inline-flex; gap: 8px; align-items: center; padding: 11px 16px; border-radius: 999px; border: 0; background: var(--gold); color: var(--navy); font-weight: 700; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.45), 0 0 0 4px rgba(255, 214, 10, .12); }
+.ai-fab:hover { background: var(--gold-2); }
+.ai-panel { position: fixed; right: 20px; bottom: 20px; z-index: 16; width: min(420px, calc(100vw - 32px)); height: min(640px, calc(100dvh - 40px)); background: var(--panel); border: 1px solid var(--line-2); border-radius: 16px; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.55); overflow: hidden; }
+.ai-head { display: flex; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,214,10,.07), transparent); }
+.icon-x { background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px; }
+.ai-log { list-style: none; margin: 0; padding: 14px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.ai-msg { max-width: 92%; padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
+.ai-msg.me { align-self: flex-end; background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent); }
+.ai-msg.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+.ai-msg.err { color: var(--bad); }
+.ai-msg img { max-width: 120px; max-height: 90px; border-radius: 6px; display: block; margin-top: 6px; }
+.ai-card { align-self: stretch; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+.ai-card .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ai-card label { font-size: 11px; }
+.ai-card input, .ai-card textarea, .ai-card select { padding: 6px 8px; font-size: 13px; }
+.ai-dup { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.ai-dup a { color: var(--warn); font-weight: 700; }
+.ai-form { border-top: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; }
+.ai-form.drag { outline: 2px dashed var(--gold); outline-offset: -6px; }
+.ai-thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
+.ai-thumbs:empty { display: none; }
+.ai-thumbs span { position: relative; }
+.ai-thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line-2); }
+.ai-thumbs button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--bad); color: #fff; font-size: 10px; cursor: pointer; line-height: 18px; padding: 0; }
+.attach { cursor: pointer; }
+.typing::after { content: "…"; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+@media (max-width: 700px) {
+  .ai-fab { bottom: 76px; right: 12px; padding: 10px 14px; }
+  .ai-panel { right: 8px; left: 8px; bottom: 8px; width: auto; height: calc(100dvh - 16px); }
+}

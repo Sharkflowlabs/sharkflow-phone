@@ -343,6 +343,24 @@
     </form>
   </dialog>
 
+  <!-- Lead assistant -->
+  <button id="aiFab" class="ai-fab" hidden aria-label="Open lead assistant"><span>✦</span> Add lead with AI</button>
+  <aside id="aiPanel" class="ai-panel" hidden aria-label="Lead assistant">
+    <header class="ai-head">
+      <div><b>Lead assistant</b><div class="muted small">Drop a screenshot of a Google, Instagram or Facebook page. I'll fill in the prospect for you.</div></div>
+      <button class="icon-x" id="aiClose" aria-label="Close">✕</button>
+    </header>
+    <ol id="aiLog" class="ai-log"></ol>
+    <form id="aiForm" class="ai-form">
+      <div id="aiThumbs" class="ai-thumbs"></div>
+      <textarea id="aiText" rows="2" placeholder="Attach or paste (Ctrl+V) a screenshot, or paste their details"></textarea>
+      <div class="row between">
+        <label class="btn small attach">📎 Screenshot<input id="aiFile" type="file" accept="image/*" multiple hidden></label>
+        <button class="btn primary" id="aiSend" type="submit">Read lead</button>
+      </div>
+    </form>
+  </aside>
+
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="/vendor/twilio.min.js" defer></script>

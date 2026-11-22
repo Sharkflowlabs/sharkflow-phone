@@ -90,6 +90,7 @@
   async function start() {
     try { state.me = await api('/api/me'); } catch { return showLogin(); }
     $('login').hidden = true; $('shell').hidden = false;
+    $('aiFab').hidden = false;
     const opts = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
     $('stageFilter').insertAdjacentHTML('beforeend', opts);
     $('fStage').innerHTML = opts; $('newStage').innerHTML = opts;
@@ -845,6 +846,107 @@
   });
   $('rejectBtn').addEventListener('click', () => { if (state.incoming) state.incoming.reject(); });
   document.addEventListener('click', () => { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); }, { once: true });
+
+  // ---------- lead assistant (screenshot -> prospect) ----------
+  const ai = { images: [], busy: false };
+  const aiLog = (html, cls) => {
+    const li = document.createElement('li'); li.className = cls; li.innerHTML = html;
+    $('aiLog').appendChild(li); $('aiLog').scrollTop = $('aiLog').scrollHeight; return li;
+  };
+  function openAi() {
+    $('aiPanel').hidden = false; $('aiFab').hidden = true;
+    if (!$('aiLog').children.length) {
+      aiLog(state.me.assistantReady
+        ? 'Hi Sai. Send me a screenshot of a business (Google Maps, Instagram, Facebook, Yelp) or paste their details. I\'ll pull out the name, phone, Instagram and more, check it isn\'t already in your CRM, and add it to Prospects once you OK it.'
+        : 'The assistant isn\'t switched on yet. Add an ANTHROPIC_API_KEY secret to the sharkflow-phone Worker in Cloudflare, then refresh.', 'ai-msg bot');
+    }
+    $('aiText').focus();
+  }
+  $('aiFab').addEventListener('click', openAi);
+  $('aiClose').addEventListener('click', () => { $('aiPanel').hidden = true; $('aiFab').hidden = false; });
+
+  // Shrink screenshots in the browser so uploads stay small (long side 1600px, JPEG).
+  function shrink(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const url = c.toDataURL('image/jpeg', 0.85);
+        URL.revokeObjectURL(img.src);
+        resolve({ media_type: 'image/jpeg', data: url.split(',')[1], url });
+      };
+      img.onerror = () => reject(new Error('Could not read that image'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  async function addImages(files) {
+    for (const f of files) {
+      if (!f.type.startsWith('image/')) continue;
+      if (ai.images.length >= 4) { toast('Up to 4 screenshots at a time.'); break; }
+      try { ai.images.push(await shrink(f)); } catch (e) { toast(e.message); }
+    }
+    renderThumbs();
+  }
+  function renderThumbs() {
+    $('aiThumbs').innerHTML = ai.images.map((im, i) => `<span><img src="${im.url}" alt="Screenshot ${i + 1}"><button type="button" data-rmimg="${i}" aria-label="Remove">✕</button></span>`).join('');
+  }
+  $('aiThumbs').addEventListener('click', (e) => { const b = e.target.closest('[data-rmimg]'); if (b) { ai.images.splice(Number(b.dataset.rmimg), 1); renderThumbs(); } });
+  $('aiFile').addEventListener('change', (e) => { addImages([...e.target.files]); e.target.value = ''; });
+  $('aiText').addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData || {}).items || []].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
+    if (files.length) { e.preventDefault(); addImages(files); }
+  });
+  $('aiForm').addEventListener('dragover', (e) => { e.preventDefault(); $('aiForm').classList.add('drag'); });
+  $('aiForm').addEventListener('dragleave', () => $('aiForm').classList.remove('drag'));
+  $('aiForm').addEventListener('drop', (e) => { e.preventDefault(); $('aiForm').classList.remove('drag'); addImages([...e.dataTransfer.files]); });
+  $('aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('aiForm').requestSubmit(); } });
+
+  $('aiForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (ai.busy) return;
+    const text = $('aiText').value.trim();
+    if (!text && !ai.images.length) return;
+    if (!state.me.assistantReady) { aiLog('Add the ANTHROPIC_API_KEY secret first, then refresh.', 'ai-msg bot err'); return; }
+    const images = ai.images; ai.images = []; renderThumbs(); $('aiText').value = '';
+    aiLog(esc(text) + images.map((im) => `<img src="${im.url}" alt="">`).join(''), 'ai-msg me');
+    const wait = aiLog('<span class="typing">Reading</span>', 'ai-msg bot');
+    ai.busy = true; $('aiSend').disabled = true;
+    try {
+      const r = await api('/api/assistant/extract', { method: 'POST', body: { text, images: images.map(({ media_type, data }) => ({ media_type, data })) } });
+      wait.remove();
+      leadCard(r.lead, r.duplicates);
+    } catch (err) { wait.className = 'ai-msg bot err'; wait.textContent = err.message; }
+    finally { ai.busy = false; $('aiSend').disabled = false; }
+  });
+
+  function leadCard(lead, dups) {
+    const f = (k, label, full) => `<label${full ? ' style="grid-column:1/-1"' : ''}>${label}<input data-k="${k}" value="${esc(lead[k])}"></label>`;
+    const dupHtml = dups.length ? `<div class="ai-dup">Already in your CRM: ${dups.map((d) => `<a href="#c/${d.id}">${esc(d.business || d.name || d.instagram || d.phone)}</a> (${esc(d.stage)})`).join(', ')}. Add anyway only if it's a different business.</div>` : '';
+    const li = aiLog(`<div class="row between"><b>Here's what I found</b><span class="muted small">Check it, then add</span></div>
+      <div class="grid2">${f('business', 'Business', true)}${f('name', 'Contact')}${f('phone', 'Phone')}${f('instagram', 'Instagram')}${f('email', 'Email')}${f('website', 'Website')}${f('trade', 'Trade')}${f('city', 'City', true)}</div>
+      <label>Notes<textarea data-k="notes" rows="3">${esc(lead.notes)}</textarea></label>
+      <div class="grid2"><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'Prospects' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label>Amount ($)<input data-k="value" inputmode="numeric"></label></div>
+      ${dupHtml}
+      <div class="row end"><button type="button" class="btn small" data-act="skip">Discard</button><button type="button" class="btn primary small" data-act="add">${dups.length ? 'Add anyway' : 'Add to CRM'}</button></div>`, 'ai-card');
+    li.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-act]'); if (!b) return;
+      if (b.dataset.act === 'skip') { li.remove(); aiLog('Discarded.', 'ai-msg bot'); return; }
+      const v = Object.fromEntries([...li.querySelectorAll('[data-k]')].map((x) => [x.dataset.k, x.value.trim()]));
+      const head = [v.trade, v.city].filter(Boolean).join(' · ');
+      const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, email: v.email, website: v.website,
+        stage: v.stage, value: v.value, next_follow_up: today(), notes: [head, v.notes, 'Added by the lead assistant ' + today()].filter(Boolean).join('\n') };
+      b.disabled = true;
+      try {
+        const { contact } = await api('/api/contacts', { method: 'POST', body });
+        li.querySelectorAll('input,textarea,select,button').forEach((x) => { x.disabled = true; });
+        aiLog(`Added <a href="#c/${contact.id}">${esc(displayName(contact))}</a> to ${esc(contact.stage)}. Follow-up set for today.`, 'ai-msg bot');
+        if (['home', 'pipeline', 'contacts'].includes(state.page)) route();
+      } catch (err) { b.disabled = false; aiLog(esc(err.message), 'ai-msg bot err'); }
+    });
+  }
 
   start();
 })();

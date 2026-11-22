@@ -13,5 +13,8 @@
     "@twilio/voice-sdk": "2.18.5",
     "wrangler": "4.160.0"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0"
+  }
 }
