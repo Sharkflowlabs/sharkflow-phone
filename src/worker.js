@@ -2,12 +2,12 @@
 // One Worker serves the UI (from /public), a JSON API under /api, and Twilio webhooks under /twilio.
 
 const STAGES = [
-  'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'Lost',
+  'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'LTO', 'Lost',
 ];
 const FIRST = 'Prospects';
 const ATC = 'Attempt to connect';
 // Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
-const EARLY = [FIRST, ATC, 'Lost'];
+const EARLY = [FIRST, ATC, 'LTO', 'Lost'];
 // Pipeline value is counted from Interested onward.
 const PIPELINE = ['Interested', 'In build'];
 const WON = 'Closed won + site live';
@@ -634,7 +634,7 @@ async function logTouchFor(db, c, today, note) {
     let follow, reason = c.lost_reason;
     // The no-reply cadence only applies before they've answered; later stages just log the touch.
     const cadence = EARLY.includes(c.stage);
-    if (cadence && c.stage === 'Lost') stage = ATC;
+    if (cadence && (c.stage === 'Lost' || c.stage === 'LTO')) stage = c.stage === 'LTO' ? 'LTO' : ATC;
     if (!cadence) follow = addDays(today, 2);
     else if (touches >= MAX_TOUCHES) {
       stage = 'Lost'; reason = 'No response'; follow = addDays(today, 90);

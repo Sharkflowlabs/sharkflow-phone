@@ -173,9 +173,9 @@
       ['Follow-ups due', stats.due, `${stats.tasks_due} task${stats.tasks_due === 1 ? '' : 's'} due too`, 'red'],
     ].map(([k, v, s, c]) => `<div class="kpi kpi-${c}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></div>`).join('');
     const by = Object.fromEntries((stats.stages || []).map((x) => [x.stage, x]));
-    const board = state.me.stages.filter((s) => s !== 'Lost');
+    const board = state.me.stages.filter((s) => s !== 'Lost' && s !== 'LTO');
     const max = Math.max(1, ...board.map((s) => (by[s] || {}).n || 0));
-    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${(by.Lost || {}).n || 0} lost</span></div><div class="funnel-row">` + board.map((s) => {
+    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${(by.LTO || {}).n || 0} LTO · ${(by.Lost || {}).n || 0} lost</span></div><div class="funnel-row">` + board.map((s) => {
       const x = by[s] || { n: 0, total: 0 };
       return `<a class="fstep ${stageClass(s)}" href="#pipeline"><span class="fbar" style="height:${8 + Math.round((x.n / max) * 56)}px"></span><b>${x.n}</b><span>${esc(s)}</span>${state.me.pipelineStages.includes(s) || s === state.me.stages[5] ? `<em>${money(x.total)}</em>` : '<em>&nbsp;</em>'}</a>`;
     }).join('') + '</div>';
@@ -290,7 +290,7 @@
           const tags = [
             c.hot ? '<span class="tag hot">Hot</span>' : '',
             c.next_follow_up && s !== 'Lost' ? `<span class="tag ${due ? 'due' : ''}">${due ? 'Due' : 'Next'} ${esc(shortDate(c.next_follow_up))}</span>` : '',
-            c.touches && s === 'Attempt to connect' ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '',
+            c.touches && (s === 'Attempt to connect' || s === 'LTO') ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '',
             st ? `<span class="tag stale">Stuck ${st}d</span>` : '',
             c.deadline && s === 'In build' ? `<span class="tag ${c.deadline <= t ? 'due' : ''}">Deliver ${esc(shortDate(c.deadline))}</span>` : '',
             c.lost_reason && s === 'Lost' ? `<span class="tag">${esc(c.lost_reason)}</span>` : '',
@@ -400,11 +400,11 @@
     $('fValue').value = c.value ?? ''; $('fHot').checked = Boolean(c.hot); $('fNext').value = c.next_step || '';
     $('fLost').value = c.lost_reason || ''; $('fDeadline').value = c.deadline || '';
     $('lostWrap').hidden = c.stage !== 'Lost'; $('deadlineWrap').hidden = c.stage !== 'In build';
-    const board = state.me.stages.filter((s) => s !== 'Lost');
+    const board = state.me.stages.filter((s) => s !== 'Lost' && s !== 'LTO');
     const idx = board.indexOf(c.stage);
     $('stageBar').innerHTML = board.map((s, i) => `<button type="button" class="sb ${i <= idx ? 'on' : ''} ${i === idx ? 'cur' : ''}" data-stage="${esc(s)}" title="${esc(s)}"></button>`).join('')
-      + `<span class="sb-label">${c.stage === 'Lost' ? 'Lost' + (c.lost_reason ? ': ' + esc(c.lost_reason) : '') : `Step ${idx + 1} of ${board.length}`}</span>`;
-    const early = ['Prospects', 'Attempt to connect', 'Lost'].includes(c.stage);
+      + `<span class="sb-label">${c.stage === 'LTO' ? 'LTO' : c.stage === 'Lost' ? 'Lost' + (c.lost_reason ? ': ' + esc(c.lost_reason) : '') : `Step ${idx + 1} of ${board.length}`}</span>`;
+    const early = ['Prospects', 'Attempt to connect', 'LTO', 'Lost'].includes(c.stage);
     $('touchText').textContent = early
       ? (c.touches ? `${c.touches} of ${state.me.maxTouches} touches sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet')
       : (c.last_touch ? `Last touch ${shortDate(c.last_touch)}` : 'Log a touch when you follow up');

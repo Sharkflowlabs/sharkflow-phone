@@ -8,7 +8,7 @@ async function tw(path,params,bad){const url=B+path;const data=url+Object.keys(p
 ok((await api('/api/contacts')).status===401,'API needs login');
 ok((await api('/api/login',{method:'POST',body:{password:'wrong'}})).status===401,'wrong password rejected');
 ok((await api('/api/login',{method:'POST',body:{password:'test-pass'}})).status===200 && cookie,'login works');
-const me=await api('/api/me'); ok(me.data.stages.length===7 && me.data.callingReady,'me + stages');
+const me=await api('/api/me'); ok(me.data.stages.length===8 && me.data.callingReady,'me + stages');
 const c=await api('/api/contacts',{method:'POST',body:{phone:'(555) 201-3344',name:'Mike',business:'Mike Roofing'}}); ok(c.status===201 && c.data.contact.phone==='+15552013344','create contact normalizes phone');
 ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).status===409,'duplicate blocked');
 const id=c.data.contact.id;
