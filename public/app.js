@@ -176,8 +176,10 @@
       }
       const label = i.direction === 'out' ? 'Outgoing call' : 'Incoming call';
       const dur = i.duration ? ` · ${Math.floor(i.duration / 60)}:${String(i.duration % 60).padStart(2, '0')}` : '';
-      const vm = i.has_voicemail ? `<audio controls preload="none" src="/api/calls/${i.id}/recording"></audio>` : '';
-      return `<li class="callrow">${label} · ${esc(i.status || '')}${dur} · ${esc(when(i.created_at))}${vm}</li>`;
+      const rec = i.has_recording
+        ? `<span class="rec-label">${i.status === 'voicemail' ? 'Voicemail' : 'Recording'}</span><audio controls preload="none" src="/api/calls/${i.id}/recording"></audio><a class="link" href="/api/calls/${i.id}/recording" download="call-${i.id}.mp3">Download</a>`
+        : '';
+      return `<li class="callrow">${label} · ${esc(i.status || '')}${dur} · ${esc(when(i.created_at))}${rec}</li>`;
     }).join('') || '<li class="callrow">No texts or calls yet.</li>';
     if (scroll || atBottom) tl.scrollTop = tl.scrollHeight;
   }

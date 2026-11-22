@@ -283,7 +283,7 @@ async function handleApi(request, env, url) {
     ]);
     const items = [
       ...msgs.results.reverse().map((x) => ({ type: 'message', ...x })),
-      ...calls.results.reverse().map((x) => ({ type: 'call', ...x, recording_sid: undefined, has_voicemail: Boolean(x.recording_sid) })),
+      ...calls.results.reverse().map((x) => ({ type: 'call', ...x, recording_sid: undefined, has_recording: Boolean(x.recording_sid) })),
     ].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
     return json({ items });
   }
@@ -354,7 +354,7 @@ async function handleApi(request, env, url) {
   if ((m = path.match(/^\/api\/calls\/(\d+)\/recording$/)) && method === 'GET') {
     requireEnv(env, 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN');
     const call = await db.prepare('SELECT recording_sid FROM calls WHERE id = ?').bind(Number(m[1])).first();
-    if (!call || !call.recording_sid) throw new HttpError(404, 'No voicemail');
+    if (!call || !call.recording_sid) throw new HttpError(404, 'No recording');
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Recordings/${call.recording_sid}.mp3`, {
       headers: { authorization: twilioAuthHeader(env) },
     });
@@ -363,6 +363,18 @@ async function handleApi(request, env, url) {
   }
 
   throw new HttpError(404, 'Not found');
+}
+
+function recordingOn(env) {
+  return String(env.RECORD_CALLS ?? 'true').toLowerCase() !== 'false';
+}
+function recordingNotice(env) {
+  return xmlEscape(env.RECORDING_NOTICE || 'This call may be recorded.');
+}
+function dialRecordAttrs(env, origin) {
+  return recordingOn(env)
+    ? ` record="record-from-answer-dual" recordingStatusCallback="${origin}/twilio/recording" recordingStatusCallbackEvent="completed"`
+    : '';
 }
 
 function optOutLine(env) {
@@ -485,7 +497,8 @@ async function handleTwilio(request, env, url) {
       const forward = normalizePhone(env.FORWARD_TO);
       const callerId = forward ? xmlEscape(p.From || env.TWILIO_NUMBER) : '';
       return twiml(
-        `<Dial timeout="20" answerOnBridge="true" action="${origin}/twilio/voice-after"${callerId ? ` callerId="${callerId}"` : ''}>` +
+        (recordingOn(env) ? `<Say voice="Polly.Joanna">${recordingNotice(env)}</Say>` : '') +
+        `<Dial timeout="20" answerOnBridge="true" action="${origin}/twilio/voice-after"${callerId ? ` callerId="${callerId}"` : ''}${dialRecordAttrs(env, origin)}>` +
         `<Client>${CLIENT_IDENTITY}</Client>` +
         (forward ? `<Number>${forward}</Number>` : '') +
         `</Dial>`,
@@ -530,9 +543,22 @@ async function handleTwilio(request, env, url) {
         db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Leads' THEN 'Contacted' ELSE stage END WHERE id = ?").bind(ts, contact.id),
       ]);
       return twiml(
-        `<Dial callerId="${xmlEscape(env.TWILIO_NUMBER)}" answerOnBridge="true" timeout="30" action="${origin}/twilio/dial-done">` +
-        `<Number>${to}</Number></Dial>`,
+        `<Dial callerId="${xmlEscape(env.TWILIO_NUMBER)}" answerOnBridge="true" timeout="30" action="${origin}/twilio/dial-done"${dialRecordAttrs(env, origin)}>` +
+        `<Number${recordingOn(env) ? ` url="${origin}/twilio/whisper"` : ''}>${to}</Number></Dial>`,
       );
+    }
+
+    // Played to the person you called, as soon as they pick up.
+    case '/twilio/whisper':
+      return twiml(`<Say voice="Polly.Joanna">${recordingNotice(env)}</Say>`);
+
+    // A call recording (in or out) is ready.
+    case '/twilio/recording': {
+      if (p.RecordingSid && Number(p.RecordingDuration || 0) > 0) {
+        await db.prepare("UPDATE calls SET recording_sid = ?, recording_duration = ? WHERE twilio_sid = ? AND status != 'voicemail'")
+          .bind(p.RecordingSid, Number(p.RecordingDuration), p.CallSid).run();
+      }
+      return new Response('', { status: 204 });
     }
 
     case '/twilio/dial-done': {

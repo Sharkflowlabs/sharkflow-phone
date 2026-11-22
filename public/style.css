@@ -120,3 +120,5 @@ dialog::backdrop { background: rgba(10, 22, 40, .5); }
 .optin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .optin-record { padding: 10px; border-radius: 8px; background: var(--bubble-in); font-size: 14px; display: grid; gap: 4px; }
 .optin-record .link { justify-self: start; padding: 0; }
+.timeline .callrow .rec-label { display: block; margin-top: 6px; font-weight: 600; }
+.timeline .callrow:has(audio) { border-radius: 14px; }

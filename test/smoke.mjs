@@ -33,12 +33,20 @@ ok((await api(`/api/contacts/${id}/messages`,{method:'POST',body:{body:'hello?'}
 await tw('/twilio/sms',{From:'+15552013344',Body:'START',MessageSid:'SM4'});
 ok((await api(`/api/contacts/${id}`)).data.contact.opted_out===0,'START opts back in');
 let v=await tw('/twilio/voice-in',{From:'+15552013344',To:'+18885550100',CallSid:'CA1'}); ok(v.text.includes('<Client>owner</Client>') && v.text.includes('/twilio/voice-after'),'inbound call rings browser');
+ok(v.text.includes('may be recorded') && v.text.includes('record="record-from-answer-dual"'),'inbound call announced + recorded');
 v=await tw('/twilio/voice-after',{CallSid:'CA1',DialCallStatus:'no-answer'}); ok(v.text.includes('<Record'),'missed call -> voicemail');
 await tw('/twilio/voicemail',{CallSid:'CA1',RecordingSid:'RE1',RecordingDuration:'14'});
-tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.some(i=>i.type==='call'&&i.has_voicemail&&i.status==='voicemail'),'voicemail logged');
-v=await tw('/twilio/voice-out',{Caller:'client:owner',To:'(555) 777-1212',CallSid:'CA2'}); ok(v.text.includes('<Number>+15557771212</Number>') && v.text.includes('callerId="+18885550100"'),'browser outbound call TwiML');
+tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.some(i=>i.type==='call'&&i.has_recording&&i.status==='voicemail'),'voicemail logged');
+v=await tw('/twilio/voice-out',{Caller:'client:owner',To:'(555) 777-1212',CallSid:'CA2'}); ok(v.text.includes('>+15557771212</Number>') && v.text.includes('callerId="+18885550100"'),'browser outbound call TwiML');
+ok(v.text.includes('/twilio/whisper') && v.text.includes('record="record-from-answer-dual"'),'outbound call recorded with whisper notice');
+ok((await tw('/twilio/whisper',{CallSid:'CA9'})).text.includes('may be recorded'),'whisper plays notice');
 ok((await tw('/twilio/voice-out',{Caller:'client:intruder',To:'+15557771212',CallSid:'CA3'})).text.includes('<Reject/>'),'other identities rejected');
 await tw('/twilio/dial-done',{CallSid:'CA2',DialCallStatus:'completed',DialCallDuration:'65'});
+await tw('/twilio/recording',{CallSid:'CA2',RecordingSid:'RE2',RecordingDuration:'63'});
+await tw('/twilio/recording',{CallSid:'CA1',RecordingSid:'RE9',RecordingDuration:'5'});
+{ const l=await api('/api/contacts?q=777'); const cid=l.data.contacts[0].id; const t2=await api(`/api/contacts/${cid}/timeline`);
+  ok(t2.data.items.some(i=>i.type==='call'&&i.status==='answered'&&i.has_recording),'outbound call recording saved'); }
+{ const t3=await api(`/api/contacts/${id}/timeline`); ok(t3.data.items.some(i=>i.type==='call'&&i.status==='voicemail'),'call recording does not overwrite voicemail'); }
 const t=await api('/api/voice-token'); const [h,p,s]=t.data.token.split('.'); const exp=crypto.createHmac('sha256','keysecret').update(h+'.'+p).digest('base64url');
 const pl=JSON.parse(Buffer.from(p,'base64url')); ok(s===exp && pl.grants.voice.outgoing.application_sid==='AP_test' && pl.grants.identity==='owner','voice token signed correctly');
 ok((await fetch(B+'/').then(r=>r.text())).includes('Sharkflow Phone'),'UI served');

@@ -16,6 +16,9 @@ database_id = "a8b73e65-b207-4f14-8877-426f7fca70be"
 [vars]
 # Optional. Your own cell in E.164 (e.g. +919876543210). Incoming calls ring the browser and this number together.
 FORWARD_TO = ""
+# Record every answered call (both sides). The other person hears RECORDING_NOTICE first.
+RECORD_CALLS = "true"
+RECORDING_NOTICE = "This call may be recorded."
 OPT_OUT_LINE = "Reply STOP to opt out."
 VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Please leave your name, number and a short message after the tone."
 
