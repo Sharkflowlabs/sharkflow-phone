@@ -1,7 +1,9 @@
 // Sharkflow Phone front end. Plain JS, no build step.
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { me: null, contacts: [], counts: {}, current: null, view: '', stage: '', q: '', device: null, call: null, incoming: null, timer: null };
+  const state = { me: null, contacts: [], counts: {}, current: null, view: '', stage: '', q: '', device: null, call: null, incoming: null, timer: null,
+    mode: 'today', pipeline: [], tasks: [], stats: {}, boardQ: '', showClosed: false };
+  const ACTIVE = ['In discussion', 'Mockup sent', 'Pricing & invoicing', 'In build'];
 
   // ---------- utils ----------
   const today = (offsetDays = 0) => {
@@ -13,7 +15,21 @@
     const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(p || '');
     return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (p || '');
   };
-  const displayName = (c) => c.name || c.business || fmtPhone(c.phone);
+  const displayName = (c) => c.business || c.name || (c.instagram ? '@' + c.instagram : '') || fmtPhone(c.phone) || c.email || 'Unnamed';
+  const money = (n) => '$' + Number(n || 0).toLocaleString();
+  const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
+  const shortDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+  const igUrl = (h) => h ? (/^https?:/.test(h) ? h : `https://instagram.com/${h.replace(/^@/, '')}`) : '';
+  const subline = (c) => [c.name && c.business ? c.name : '', fmtPhone(c.phone), c.instagram ? '@' + c.instagram : ''].filter(Boolean).join(' · ');
+  // A deal is stuck when it has sat in an active stage longer than the limit with no touch or activity.
+  const staleDays = (c) => {
+    const lim = state.me.staleDays[c.stage];
+    if (!lim) return 0;
+    const last = [c.stage_since, c.last_touch, (c.last_activity_at || '').slice(0, 10)].filter(Boolean).sort().pop();
+    if (!last) return 0;
+    const d = daysBetween(last, today());
+    return d > lim ? d : 0;
+  };
   const when = (iso) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -61,8 +77,9 @@
   // ---------- boot ----------
   async function start() {
     try { state.me = await api('/api/me'); } catch { return showLogin(); }
-    $('login').hidden = true; $('app').hidden = false;
+    $('login').hidden = true; $('shell').hidden = false;
     const opts = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
+    $('fLost').insertAdjacentHTML('beforeend', state.me.lostReasons.map((s) => `<option>${esc(s)}</option>`).join(''));
     $('stageFilter').insertAdjacentHTML('beforeend', opts);
     $('fStage').innerHTML = opts; $('newStage').innerHTML = opts;
     $('oiChannel').innerHTML = '<option value="">Pick one</option>' + state.me.optInChannels.map((s) => `<option>${esc(s)}</option>`).join('');
@@ -70,7 +87,7 @@
     $('numberLabel').textContent = state.me.number ? fmtPhone(state.me.number) : 'No number set';
     await loadContacts();
     const id = Number(location.hash.slice(1));
-    if (id) openContact(id);
+    if (id) { setMode('inbox'); openContact(id); } else setMode(localStorageGet('mode') || 'today');
     setInterval(poll, 10000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
     if (state.me.callingReady) setupVoice();
@@ -80,8 +97,177 @@
   async function poll() {
     if (document.hidden) return;
     await loadContacts().catch(() => {});
-    if (state.current) await loadTimeline(false).catch(() => {});
+    if (state.mode === 'inbox' && state.current) await loadTimeline(false).catch(() => {});
+    if (state.mode === 'today') await loadToday().catch(() => {});
   }
+
+  function localStorageGet(k) { try { return localStorage.getItem('sfc_' + k); } catch { return null; } }
+  function localStorageSet(k, v) { try { localStorage.setItem('sfc_' + k, v); } catch { /* private mode */ } }
+
+  // ---------- modes ----------
+  function setMode(mode) {
+    state.mode = mode; localStorageSet('mode', mode);
+    document.querySelectorAll('.modes .mode').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    $('today').hidden = mode !== 'today'; $('board').hidden = mode !== 'board'; $('app').hidden = mode !== 'inbox';
+    if (mode === 'today') loadToday().catch((e) => toast(e.message));
+    if (mode === 'board') loadBoard().catch((e) => toast(e.message));
+    if (mode === 'inbox') loadContacts().catch(() => {});
+  }
+  document.querySelectorAll('.modes .mode').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  function goContact(id) { setMode('inbox'); openContact(id); }
+
+  // ---------- today ----------
+  async function loadToday() {
+    const t = today();
+    const [stats, tasks, pipe] = await Promise.all([
+      api('/api/stats?today=' + t), api('/api/tasks?today=' + t), api('/api/pipeline'),
+    ]);
+    state.stats = stats; state.tasks = tasks.tasks; state.pipeline = pipe.contacts;
+    $('tiles').innerHTML = [
+      ['Active deals', stats.active, 'In discussion to In build'],
+      ['Follow-ups due', stats.due, 'touches to send today'],
+      ['Open pipeline', money(stats.open_value), `${stats.open_count} in mockup or pricing`],
+      ['Won this month', money(stats.won_value), `${stats.won_count} deal${stats.won_count === 1 ? '' : 's'}`],
+    ].map(([k, v, s]) => `<div class="tile"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></div>`).join('');
+    const due = state.tasks.filter((x) => x.due && x.due <= t);
+    const noDate = state.tasks.filter((x) => !x.due);
+    const soon = state.tasks.filter((x) => x.due && x.due > t && x.due <= today(7));
+    $('doList').innerHTML = [...due, ...noDate].map(taskRow).join('') || '<li class="muted">Nothing due. Nice.</li>';
+    $('upcomingList').innerHTML = soon.map(taskRow).join('') || '<li class="muted">No tasks in the next 7 days.</li>';
+    const follow = state.pipeline.filter((c) => c.next_follow_up && c.next_follow_up <= t && c.stage !== 'Lost' && c.stage !== 'Closed won + site live')
+      .sort((a, b) => (b.hot - a.hot) || a.next_follow_up.localeCompare(b.next_follow_up));
+    $('followList').innerHTML = follow.map((c) => `<li class="work" data-cid="${c.id}">
+      <div class="w-main"><a href="#" class="w-name" data-open="${c.id}">${esc(displayName(c))}</a>${c.hot ? '<span class="tag hot">Hot</span>' : ''}
+        <div class="muted">${esc(c.stage)}${['Leads', 'Contacted', 'Later'].includes(c.stage) ? ' · ' + (c.touches ? `touch ${c.touches} of ${state.me.maxTouches} sent` : 'not contacted yet') : ''}${c.next_follow_up < t ? ` · ${daysBetween(c.next_follow_up, t)}d late` : ''}${c.next_step ? ' · ' + esc(c.next_step) : ''}</div></div>
+      <div class="w-act">${c.instagram ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(igUrl(c.instagram))}">DM</a>` : ''}<button class="btn small" data-touch="${c.id}">Log touch</button><button class="btn small" data-replied="${c.id}">Replied</button></div>
+    </li>`).join('') || '<li class="muted">No follow-ups due today.</li>';
+    const stale = state.pipeline.map((c) => [c, staleDays(c)]).filter(([, d]) => d).sort((a, b) => b[1] - a[1]);
+    $('staleList').innerHTML = stale.map(([c, d]) => `<li class="work"><div class="w-main"><a href="#" class="w-name" data-open="${c.id}">${esc(displayName(c))}</a>
+      <div class="muted">${esc(c.stage)} for ${d} days with no activity${c.value ? ' · ' + money(c.value) : ''}</div></div></li>`).join('') || '<li class="muted">No stuck deals.</li>';
+    const n = due.length + follow.length;
+    $('todayCount').textContent = n || '';
+  }
+
+  function taskRow(x) {
+    const late = x.due && x.due < today();
+    const who = x.contact_id ? `<a href="#" data-open="${x.contact_id}">${esc(x.contact_business || x.contact_name || 'Contact')}</a>` : '';
+    return `<li class="task ${x.done ? 'done' : ''}" data-task="${x.id}">
+      <label class="check"><input type="checkbox" data-done="${x.id}" ${x.done ? 'checked' : ''}><span>${esc(x.title)}</span></label>
+      <span class="muted">${who}${who && x.due ? ' · ' : ''}${x.due ? `<span class="${late ? 'late' : ''}">${late ? 'Overdue ' : ''}${esc(shortDate(x.due))}</span>` : ''}</span>
+      <button type="button" class="link danger" data-deltask="${x.id}" aria-label="Delete task">✕</button>
+    </li>`;
+  }
+
+  async function logTouch(id) {
+    const { contact } = await api(`/api/contacts/${id}/touch`, { method: 'POST', body: { today: today() } });
+    toast(contact.stage === 'Lost' ? `${displayName(contact)} moved to Lost (no response). Retry on ${shortDate(contact.next_follow_up)}.`
+      : `Touch ${contact.touches} logged. Next follow-up ${shortDate(contact.next_follow_up)}.`);
+    return contact;
+  }
+  async function markReplied(id) {
+    const { contact } = await api(`/api/contacts/${id}/replied`, { method: 'POST', body: { today: today() } });
+    toast(`${displayName(contact)} is now ${contact.stage}.`);
+    return contact;
+  }
+
+  // One click handler for task rows, open links and touch buttons on every page.
+  document.addEventListener('click', async (e) => {
+    const t = e.target;
+    try {
+      if (t.dataset.open) { e.preventDefault(); goContact(Number(t.dataset.open)); return; }
+      if (t.dataset.touch) { await logTouch(Number(t.dataset.touch)); await loadToday(); return; }
+      if (t.dataset.replied) { await markReplied(Number(t.dataset.replied)); await loadToday(); return; }
+      if (t.dataset.deltask) {
+        await api(`/api/tasks/${t.dataset.deltask}`, { method: 'DELETE', body: {} });
+        refreshTasks(); return;
+      }
+    } catch (err) { toast(err.message); }
+  });
+  document.addEventListener('change', async (e) => {
+    const t = e.target;
+    if (!t.dataset.done) return;
+    try { await api(`/api/tasks/${t.dataset.done}`, { method: 'PATCH', body: { done: t.checked } }); refreshTasks(); }
+    catch (err) { toast(err.message); }
+  });
+  function refreshTasks() {
+    if (state.mode === 'today') loadToday().catch(() => {});
+    if (state.current) loadContactTasks().catch(() => {});
+  }
+  $('taskForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/tasks', { method: 'POST', body: { title: $('taskTitle').value, due: $('taskDue').value || today() } });
+      $('taskForm').reset(); loadToday();
+    } catch (err) { toast(err.message); }
+  });
+  $('prospectForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const lines = $('prospectLines').value.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    try {
+      const r = await api('/api/prospects', { method: 'POST', body: { lines } });
+      $('prospectResult').textContent = `Added ${r.added}. Skipped ${r.skipped} (already there or not an Instagram link).`;
+      $('prospectLines').value = ''; loadToday();
+    } catch (err) { toast(err.message); }
+  });
+
+  // ---------- pipeline board ----------
+  async function loadBoard() {
+    const { contacts } = await api('/api/pipeline');
+    state.pipeline = contacts; renderBoard();
+  }
+  function renderBoard() {
+    const t = today();
+    const q = state.boardQ.toLowerCase();
+    const stages = state.me.stages.filter((s) => state.showClosed || (s !== 'Lost' && s !== 'Later'));
+    const list = state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step].join(' ').toLowerCase().includes(q));
+    $('boardCols').innerHTML = stages.map((s) => {
+      const cards = list.filter((c) => c.stage === s);
+      const total = cards.reduce((n, c) => n + (c.value || 0), 0);
+      return `<section class="col" data-stage="${esc(s)}">
+        <header><b>${esc(s)}</b><span class="muted">${cards.length}${total ? ' · ' + money(total) : ''}</span></header>
+        <div class="cards">${cards.map((c) => {
+          const due = c.next_follow_up && c.next_follow_up <= t;
+          const st = staleDays(c);
+          return `<article class="dcard ${c.hot ? 'is-hot' : ''}" draggable="true" data-id="${c.id}">
+            <div class="d-top"><span class="d-name">${esc(displayName(c))}</span>${c.value ? `<span class="d-val">${money(c.value)}</span>` : ''}</div>
+            ${c.next_step ? `<div class="d-next">${esc(c.next_step)}</div>` : ''}
+            <div class="row wrap">${c.hot ? '<span class="tag hot">Hot</span>' : ''}${c.next_follow_up ? `<span class="tag ${due ? 'due' : ''}">${due ? 'Due' : 'Next'} ${esc(shortDate(c.next_follow_up))}</span>` : ''}${c.touches && s === 'Contacted' ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : ''}${st ? `<span class="tag stale">Stuck ${st}d</span>` : ''}${c.deadline && s === 'In build' ? `<span class="tag ${c.deadline <= t ? 'due' : ''}">Deliver ${esc(shortDate(c.deadline))}</span>` : ''}${c.lost_reason && s === 'Lost' ? `<span class="tag">${esc(c.lost_reason)}</span>` : ''}${c.unread ? '<span class="tag due">New text</span>' : ''}</div>
+          </article>`;
+        }).join('')}</div>
+      </section>`;
+    }).join('');
+  }
+  $('boardSearch').addEventListener('input', (e) => { state.boardQ = e.target.value.trim(); renderBoard(); });
+  $('showClosed').addEventListener('change', (e) => { state.showClosed = e.target.checked; renderBoard(); });
+  $('boardCols').addEventListener('click', (e) => {
+    const card = e.target.closest('.dcard'); if (card) goContact(Number(card.dataset.id));
+  });
+  let dragId = null;
+  $('boardCols').addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.dcard'); if (!card) return;
+    dragId = Number(card.dataset.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(dragId));
+    card.classList.add('dragging');
+  });
+  $('boardCols').addEventListener('dragend', (e) => { const c = e.target.closest('.dcard'); if (c) c.classList.remove('dragging'); });
+  $('boardCols').addEventListener('dragover', (e) => {
+    const col = e.target.closest('.col'); if (!col || dragId === null) return;
+    e.preventDefault();
+    document.querySelectorAll('.col.over').forEach((x) => x !== col && x.classList.remove('over'));
+    col.classList.add('over');
+  });
+  $('boardCols').addEventListener('drop', async (e) => {
+    const col = e.target.closest('.col'); if (!col || dragId === null) return;
+    e.preventDefault(); col.classList.remove('over');
+    const id = dragId; dragId = null;
+    const c = state.pipeline.find((x) => x.id === id);
+    if (!c || c.stage === col.dataset.stage) return;
+    c.stage = col.dataset.stage; renderBoard();
+    try {
+      await api(`/api/contacts/${id}`, { method: 'PATCH', body: { stage: col.dataset.stage, today: today() } });
+      await loadBoard();
+    } catch (err) { toast(err.message); loadBoard(); }
+  });
 
   // ---------- contact list ----------
   async function loadContacts() {
@@ -96,17 +282,18 @@
 
   function renderList() {
     $('unreadCount').textContent = state.counts.unread || '';
+    $('inboxCount').textContent = state.counts.unread || '';
     $('dueCount').textContent = state.counts.due || '';
     const unreadTotal = state.counts.unread || 0;
-    document.title = unreadTotal ? `(${unreadTotal}) Sharkflow Phone` : 'Sharkflow Phone';
+    document.title = unreadTotal ? `(${unreadTotal}) Sharkflow CRM` : 'Sharkflow CRM';
     const t = today();
     $('contactList').innerHTML = state.contacts.map((c) => {
       const due = c.next_follow_up && c.next_follow_up <= t;
-      const snip = c.last_body ? (c.last_direction === 'out' ? 'You: ' : '') + c.last_body : (c.business && c.name ? c.business : fmtPhone(c.phone));
+      const snip = c.last_body ? (c.last_direction === 'out' ? 'You: ' : '') + c.last_body : (c.next_step || subline(c));
       return `<li data-id="${c.id}" class="${state.current && state.current.id === c.id ? 'active' : ''}">
         <div class="top"><span class="nm ${c.unread ? 'unread' : ''}">${esc(displayName(c))}</span><span class="muted">${esc(when(c.last_activity_at))}</span></div>
         <div class="snip">${esc(snip)}</div>
-        <div class="row"><span class="tag">${esc(c.stage)}</span>${c.next_follow_up ? `<span class="tag ${due ? 'due' : ''}">Follow up ${esc(c.next_follow_up.slice(5))}</span>` : ''}${c.opted_out ? '<span class="tag">STOP</span>' : ''}</div>
+        <div class="row wrap"><span class="tag">${esc(c.stage)}</span>${c.hot ? '<span class="tag hot">Hot</span>' : ''}${c.value ? `<span class="tag">${money(c.value)}</span>` : ''}${c.next_follow_up ? `<span class="tag ${due ? 'due' : ''}">Follow up ${esc(c.next_follow_up.slice(5))}</span>` : ''}${c.opted_out ? '<span class="tag">STOP</span>' : ''}</div>
       </li>`;
     }).join('') || '<li class="muted">No contacts here yet.</li>';
   }
@@ -135,7 +322,7 @@
     $('emptyState').hidden = true; $('contactView').hidden = false;
     $('contactView').classList.remove('show-info');
     fillContact();
-    await loadTimeline(true);
+    await Promise.all([loadTimeline(true), loadContactTasks()]);
     if (contact.unread) { await api(`/api/contacts/${id}/read`, { method: 'POST', body: {} }); loadContacts(); }
     else renderList();
   }
@@ -143,9 +330,14 @@
   function fillContact() {
     const c = state.current;
     $('cName').textContent = displayName(c);
-    $('cSub').textContent = [fmtPhone(c.phone), c.name ? c.business : ''].filter(Boolean).join(' · ');
+    $('cSub').textContent = subline(c);
     $('fStage').value = c.stage; $('fFollow').value = c.next_follow_up || '';
-    $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone;
+    $('fValue').value = c.value ?? ''; $('fHot').checked = Boolean(c.hot); $('fNext').value = c.next_step || '';
+    $('fLost').value = c.lost_reason || ''; $('fDeadline').value = c.deadline || '';
+    $('lostWrap').hidden = c.stage !== 'Lost'; $('deadlineWrap').hidden = c.stage !== 'In build';
+    $('touchText').textContent = c.touches ? `${c.touches} of ${state.me.maxTouches} touches sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet';
+    $('igBtn').hidden = !c.instagram; $('igBtn').href = igUrl(c.instagram);
+    $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone || '';
     $('fEmail').value = c.email; $('fWebsite').value = c.website; $('fInstagram').value = c.instagram; $('fNotes').value = c.notes;
     $('optedOutBanner').hidden = !c.opted_out;
     const locked = !c.opt_in_at && !c.opted_out;
@@ -153,11 +345,34 @@
     if (locked) { $('oiChannel').value = ''; $('oiDate').value = today(); $('oiNote').value = ''; }
     $('optInRecord').hidden = !c.opt_in_at;
     $('optInText').textContent = c.opt_in_at ? `${c.opt_in_at} · ${c.opt_in_channel}${c.opt_in_note ? ' · ' + c.opt_in_note : ''}` : '';
-    $('msgInput').disabled = $('sendBtn').disabled = Boolean(c.opted_out) || !c.opt_in_at || !state.me.textingReady;
-    $('msgInput').placeholder = state.me.textingReady ? 'Write a text…' : 'Texting is not set up yet (see SETUP.md)';
-    $('callBtn').disabled = !state.me.callingReady;
+    if (!c.phone) $('optInForm').hidden = true;
+    $('msgInput').disabled = $('sendBtn').disabled = Boolean(c.opted_out) || !c.opt_in_at || !state.me.textingReady || !c.phone;
+    $('msgInput').placeholder = !c.phone ? 'Add a phone number in the details to call or text' : state.me.textingReady ? 'Write a text…' : 'Texting turns on once your number is approved';
+    $('callBtn').disabled = !state.me.callingReady || !c.phone;
+    $('callBtn').title = !c.phone ? 'No phone number yet' : !state.me.callingReady ? 'Calling turns on once your number is set up' : '';
     $('saveState').textContent = '';
   }
+
+  async function loadContactTasks() {
+    if (!state.current) return;
+    const id = state.current.id;
+    const { tasks } = await api(`/api/tasks?contact=${id}`);
+    if (!state.current || state.current.id !== id) return;
+    $('cTasks').innerHTML = tasks.map(taskRow).join('') || '<li class="muted">No tasks.</li>';
+  }
+  $('cTaskForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/tasks', { method: 'POST', body: { title: $('cTaskTitle').value, due: $('cTaskDue').value || null, contact_id: state.current.id } });
+      $('cTaskForm').reset(); loadContactTasks();
+    } catch (err) { toast(err.message); }
+  });
+  $('touchBtn').addEventListener('click', async () => {
+    try { state.current = await logTouch(state.current.id); fillContact(); loadContacts(); } catch (err) { toast(err.message); }
+  });
+  $('repliedBtn').addEventListener('click', async () => {
+    try { state.current = await markReplied(state.current.id); fillContact(); loadContacts(); loadContactTasks(); } catch (err) { toast(err.message); }
+  });
 
   async function loadTimeline(scroll) {
     const id = state.current.id;
@@ -180,26 +395,26 @@
         ? `<span class="rec-label">${i.status === 'voicemail' ? 'Voicemail' : 'Recording'}</span><audio controls preload="none" src="/api/calls/${i.id}/recording"></audio><a class="link" href="/api/calls/${i.id}/recording" download="call-${i.id}.mp3">Download</a>`
         : '';
       return `<li class="callrow">${label} · ${esc(i.status || '')}${dur} · ${esc(when(i.created_at))}${rec}</li>`;
-    }).join('') || '<li class="callrow">No texts or calls yet.</li>';
+    }).join('') || `<li class="callrow">${state.current.phone ? 'No texts or calls yet.' : 'No phone number yet. Track this deal with the details on the right.'}</li>`;
     if (scroll || atBottom) tl.scrollTop = tl.scrollHeight;
   }
 
   $('backBtn').addEventListener('click', () => {
+    $('cTasks').innerHTML = '';
     state.current = null; history.replaceState(null, '', location.pathname);
     $('app').classList.remove('has-contact'); $('contactView').hidden = true; $('emptyState').hidden = false; renderList();
   });
   $('infoToggle').addEventListener('click', () => $('contactView').classList.toggle('show-info'));
 
   // Autosave contact fields.
-  const fieldMap = { fStage: 'stage', fFollow: 'next_follow_up', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fNotes: 'notes' };
+  const fieldMap = { fStage: 'stage', fFollow: 'next_follow_up', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fNotes: 'notes' };
   async function saveField(key, value) {
     if (!state.current) return;
     $('saveState').textContent = 'Saving…';
     try {
-      const { contact } = await api(`/api/contacts/${state.current.id}`, { method: 'PATCH', body: { [key]: value } });
-      state.current = contact; $('saveState').textContent = 'Saved';
-      $('cName').textContent = displayName(contact);
-      $('cSub').textContent = [fmtPhone(contact.phone), contact.name ? contact.business : ''].filter(Boolean).join(' · ');
+      const { contact } = await api(`/api/contacts/${state.current.id}`, { method: 'PATCH', body: { [key]: value, today: today() } });
+      state.current = contact; fillContact(); $('saveState').textContent = 'Saved';
+      if (key === 'stage') loadContactTasks();
       loadContacts();
     } catch (err) { $('saveState').textContent = ''; toast(err.message); fillContact(); }
   }
@@ -209,6 +424,7 @@
   document.querySelectorAll('[data-days]').forEach((b) => b.addEventListener('click', () => {
     const v = today(Number(b.dataset.days)); $('fFollow').value = v; saveField('next_follow_up', v);
   }));
+  $('fHot').addEventListener('change', (e) => saveField('hot', e.target.checked));
   $('clearFollow').addEventListener('click', () => { $('fFollow').value = ''; saveField('next_follow_up', null); });
 
   $('deleteBtn').addEventListener('click', async () => {
@@ -267,7 +483,7 @@
     const body = Object.fromEntries(new FormData($('newForm')));
     try {
       const { contact } = await api('/api/contacts', { method: 'POST', body });
-      $('newDialog').close(); await loadContacts(); openContact(contact.id);
+      $('newDialog').close(); goContact(contact.id);
     } catch (err) { $('newError').textContent = err.message; }
   });
 
@@ -288,7 +504,8 @@
   const headerAliases = {
     phone: ['phone', 'phone number', 'mobile', 'number', 'cell'], name: ['name', 'owner', 'contact', 'contact name', 'first name'],
     business: ['business', 'business name', 'company', 'company name'], email: ['email', 'e-mail'], website: ['website', 'site', 'url'],
-    instagram: ['instagram', 'ig', 'instagram handle', 'handle'], stage: ['stage', 'status'], notes: ['notes', 'note'],
+    instagram: ['instagram', 'ig', 'instagram handle', 'handle', 'instagram url'], stage: ['stage', 'status'], notes: ['notes', 'note'],
+    value: ['value', 'deal value', 'price', 'amount'],
   };
   $('importBtn').addEventListener('click', () => { $('importForm').reset(); $('importResult').textContent = ''; $('importDialog').showModal(); });
   $('importForm').addEventListener('submit', async (e) => {
@@ -302,11 +519,12 @@
     for (const [key, names] of Object.entries(headerAliases)) {
       const i = head.findIndex((h) => names.includes(h)); if (i >= 0) idx[key] = i;
     }
-    if (idx.phone === undefined) { $('importResult').textContent = 'No phone column found.'; return; }
-    const list = rows.map((r) => Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, (r[i] || '').trim()]))).filter((r) => r.phone);
+    if (idx.phone === undefined && idx.instagram === undefined && idx.email === undefined) { $('importResult').textContent = 'No phone, Instagram or email column found.'; return; }
+    const list = rows.map((r) => Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, (r[i] || '').trim()]))).filter((r) => r.phone || r.instagram || r.email);
     try {
       const res = await api('/api/import', { method: 'POST', body: { rows: list } });
       $('importResult').textContent = `Added ${res.added}. Skipped ${res.skipped} (duplicates or numbers it could not read).`;
+      if (state.mode !== 'inbox') setMode(state.mode);
       loadContacts();
     } catch (err) { $('importResult').textContent = err.message; }
   });

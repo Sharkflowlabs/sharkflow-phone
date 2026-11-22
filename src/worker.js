@@ -3,8 +3,22 @@
 
 const STAGES = [
   'Leads', 'Contacted', 'In discussion', 'Mockup sent',
-  'Pricing & invoicing', 'In build', 'Closed won + site live', 'Lost',
+  'Pricing & invoicing', 'In build', 'Closed won + site live', 'Later', 'Lost',
 ];
+// Tasks created automatically when a deal moves into a stage: [title, days from today].
+const STAGE_TASKS = {
+  'In discussion': [['Send the mockup', 1]],
+  'Mockup sent': [['Get feedback on the mockup', 2]],
+  'Pricing & invoicing': [['Chase the payment', 3]],
+  'In build': [['Collect logo, photos and content', 1], ['Deliver the site', 7]],
+  'Closed won + site live': [['Ask for a review and a referral', 3]],
+};
+// A deal is "stale" when it sits in one of these stages longer than this many days with no activity.
+const STALE_DAYS = { 'In discussion': 2, 'Mockup sent': 5, 'Pricing & invoicing': 7, 'In build': 7 };
+// Days to wait after outreach touch 1, 2 and 3. After touch 4 with no reply the deal goes to Lost (No response) with a 90 day retry.
+const TOUCH_GAPS = [2, 3, 5];
+const MAX_TOUCHES = 4;
+const LOST_REASONS = ['No response', 'Not interested', 'Too expensive', 'Went with someone else', 'Other'];
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT', 'REVOKE'];
 const START_WORDS = ['START', 'UNSTOP', 'YES'];
 const OPT_IN_CHANNELS = ['Instagram DM', 'Phone call', 'Email', 'Website form', 'In person', 'Texted us first', 'Other'];
@@ -54,6 +68,25 @@ function xmlEscape(s) {
 }
 
 function nowIso() { return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); }
+
+const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+function addDays(day, n) {
+  const d = new Date(day + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+// The browser sends its local date so "today" matches the user's day, not UTC.
+function todayFrom(v) { return isDate(v) ? v : nowIso().slice(0, 10); }
+
+// Accepts @handle, handle, or an instagram.com URL and returns the bare handle.
+export function igHandle(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  const m = s.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+  if (m) s = m[1];
+  s = s.replace(/^@/, '').replace(/[/?#].*$/, '');
+  return /^[A-Za-z0-9._]{1,30}$/.test(s) ? s.toLowerCase() : '';
+}
 
 export function normalizePhone(raw) {
   if (!raw) return null;
@@ -164,7 +197,138 @@ async function handleApi(request, env, url) {
       callingReady: Boolean(env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET && env.TWILIO_TWIML_APP_SID),
       textingReady: Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_NUMBER),
       optOutLine: optOutLine(env),
+      staleDays: STALE_DAYS,
+      lostReasons: LOST_REASONS,
+      maxTouches: MAX_TOUCHES,
     });
+  }
+
+  if (path === '/api/stats' && method === 'GET') {
+    const today = todayFrom(url.searchParams.get('today'));
+    const month = today.slice(0, 7);
+    const r = await db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('In discussion','Mockup sent','Pricing & invoicing','In build')) AS active,
+        (SELECT COUNT(*) FROM contacts WHERE next_follow_up IS NOT NULL AND next_follow_up <= ? AND stage NOT IN ('Lost')) AS due,
+        (SELECT COUNT(*) FROM tasks WHERE done = 0 AND due IS NOT NULL AND due <= ?) AS tasks_due,
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Mockup sent','Pricing & invoicing')) AS open_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Mockup sent','Pricing & invoicing')) AS open_count,
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('In build','Closed won + site live') AND substr(stage_since,1,7) = ?) AS won_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('In build','Closed won + site live') AND substr(stage_since,1,7) = ?) AS won_count
+    `).bind(today, today, month, month).first();
+    const { results } = await db.prepare('SELECT stage, COUNT(*) AS n, COALESCE(SUM(value),0) AS total FROM contacts GROUP BY stage').all();
+    return json({ ...r, stages: results });
+  }
+
+  if (path === '/api/pipeline' && method === 'GET') {
+    const { results } = await db.prepare(`
+      SELECT id, name, business, phone, instagram, stage, value, hot, touches, last_touch, next_step, next_follow_up,
+        stage_since, deadline, lost_reason, unread, last_activity_at, created_at
+      FROM contacts ORDER BY hot DESC, COALESCE(next_follow_up, '9999') ASC, updated_at DESC LIMIT 2000`).all();
+    return json({ contacts: results });
+  }
+
+  if (path === '/api/prospects' && method === 'POST') {
+    // Paste a list of Instagram links or handles (one per line, optional "name" after a comma or tab).
+    const { lines, stage } = await readJson(request);
+    if (!Array.isArray(lines) || lines.length > 500) throw new HttpError(400, 'Send 1 to 500 lines');
+    const st = STAGES.includes(stage) ? stage : 'Leads';
+    let added = 0, skipped = 0;
+    const today = nowIso().slice(0, 10);
+    for (const line of lines) {
+      const [first, ...rest] = String(line).split(/[,\t]/);
+      const handle = igHandle(first);
+      if (!handle) { skipped++; continue; }
+      const exists = await db.prepare('SELECT 1 FROM contacts WHERE lower(instagram) = ?').bind(handle).first();
+      if (exists) { skipped++; continue; }
+      await db.prepare('INSERT INTO contacts (name, instagram, stage, stage_since) VALUES (?, ?, ?, ?)')
+        .bind(rest.join(' ').trim().slice(0, 200) || handle, handle, st, today).run();
+      added++;
+    }
+    return json({ added, skipped });
+  }
+
+  if (path === '/api/tasks' && method === 'GET') {
+    const today = todayFrom(url.searchParams.get('today'));
+    const contactId = url.searchParams.get('contact');
+    const base = `SELECT t.*, c.name AS contact_name, c.business AS contact_business FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id`;
+    if (contactId) {
+      const { results } = await db.prepare(`${base} WHERE t.contact_id = ? ORDER BY t.done, COALESCE(t.due,'9999'), t.id`).bind(Number(contactId)).all();
+      return json({ tasks: results });
+    }
+    const [open, done] = await db.batch([
+      db.prepare(`${base} WHERE t.done = 0 ORDER BY COALESCE(t.due,'9999'), t.id LIMIT 500`),
+      db.prepare(`${base} WHERE t.done = 1 ORDER BY t.done_at DESC LIMIT 20`),
+    ]);
+    return json({ tasks: open.results, done: done.results, today });
+  }
+
+  if (path === '/api/tasks' && method === 'POST') {
+    const body = await readJson(request);
+    const title = String(body.title || '').trim().slice(0, 300);
+    if (!title) throw new HttpError(400, 'Task needs a title');
+    const due = isDate(body.due) ? body.due : null;
+    const cid = body.contact_id ? Number(body.contact_id) : null;
+    const task = await db.prepare('INSERT INTO tasks (contact_id, title, due) VALUES (?, ?, ?) RETURNING *').bind(cid, title, due).first();
+    return json({ task }, 201);
+  }
+
+  if ((m = path.match(/^\/api\/tasks\/(\d+)$/))) {
+    const id = Number(m[1]);
+    if (method === 'PATCH') {
+      const body = await readJson(request);
+      const sets = [], args = [];
+      if ('title' in body) { sets.push('title = ?'); args.push(String(body.title || '').trim().slice(0, 300) || 'Untitled'); }
+      if ('due' in body) { sets.push('due = ?'); args.push(isDate(body.due) ? body.due : null); }
+      if ('done' in body) { sets.push('done = ?', 'done_at = ?'); args.push(body.done ? 1 : 0, body.done ? nowIso() : null); }
+      if (!sets.length) throw new HttpError(400, 'Nothing to update');
+      const task = await db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, id).first();
+      if (!task) throw new HttpError(404, 'Not found');
+      return json({ task });
+    }
+    if (method === 'DELETE') {
+      await db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+      return json({ ok: true });
+    }
+  }
+
+  if ((m = path.match(/^\/api\/contacts\/(\d+)\/touch$/)) && method === 'POST') {
+    // Log one outreach attempt (DM, email, call with no answer) and schedule the next one.
+    const id = Number(m[1]);
+    const body = await readJson(request);
+    const today = todayFrom(body.today);
+    const c = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
+    if (!c) throw new HttpError(404, 'Not found');
+    const touches = (c.touches || 0) + 1;
+    let stage = c.stage === 'Leads' ? 'Contacted' : c.stage;
+    let follow, reason = c.lost_reason;
+    // The no-reply cadence only applies before they've answered; later stages just log the touch.
+    const cadence = ['Leads', 'Contacted', 'Later', 'Lost'].includes(c.stage);
+    if (cadence && c.stage === 'Lost') stage = 'Contacted';
+    if (!cadence) follow = addDays(today, 2);
+    else if (touches >= MAX_TOUCHES) {
+      stage = 'Lost'; reason = 'No response'; follow = addDays(today, 90);
+    } else follow = addDays(today, TOUCH_GAPS[touches - 1]);
+    if (cadence && stage !== 'Lost') reason = '';
+    const note = String(body.note || '').trim().slice(0, 300);
+    const notes = note ? `${c.notes ? c.notes + '\n' : ''}${today} touch ${touches}: ${note}` : c.notes;
+    const contact = await db.prepare(`UPDATE contacts SET touches = ?, last_touch = ?, stage = ?, lost_reason = ?, next_follow_up = ?,
+      stage_since = CASE WHEN stage = ? THEN stage_since ELSE ? END, notes = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
+      .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), id).first();
+    return json({ contact });
+  }
+
+  if ((m = path.match(/^\/api\/contacts\/(\d+)\/replied$/)) && method === 'POST') {
+    // They answered: stop the touch cadence and move them into discussion.
+    const id = Number(m[1]);
+    const today = todayFrom((await readJson(request)).today);
+    const c = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
+    if (!c) throw new HttpError(404, 'Not found');
+    const early = ['Leads', 'Contacted', 'Later', 'Lost'].includes(c.stage);
+    if (early) await changeStage(db, id, 'In discussion', today);
+    const contact = await db.prepare(`UPDATE contacts SET touches = 0, lost_reason = '', next_follow_up = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
+      .bind(addDays(today, 1), nowIso(), nowIso(), id).first();
+    return json({ contact });
   }
 
   if (path === '/api/contacts' && method === 'GET') {
@@ -176,12 +340,13 @@ async function handleApi(request, env, url) {
     const today = url.searchParams.get('today') || nowIso().slice(0, 10);
     if (stage) { where.push('c.stage = ?'); args.push(stage); }
     if (q) {
-      where.push('(c.name LIKE ? OR c.business LIKE ? OR c.phone LIKE ? OR c.notes LIKE ?)');
+      where.push('(c.name LIKE ? OR c.business LIKE ? OR c.phone LIKE ? OR c.notes LIKE ? OR c.instagram LIKE ? OR c.email LIKE ?)');
       const like = `%${q}%`;
-      args.push(like, like, like, like);
+      args.push(like, like, like, like, like, like);
     }
     if (view === 'due') { where.push('c.next_follow_up IS NOT NULL AND c.next_follow_up <= ?'); args.push(today); }
     if (view === 'unread') where.push('c.unread > 0');
+    if (view === 'hot') where.push('c.hot = 1');
     const sql = `
       SELECT c.*,
         (SELECT body FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS last_body,
@@ -223,20 +388,31 @@ async function handleApi(request, env, url) {
     }
     if (method === 'PATCH') {
       const body = await readJson(request);
-      const fields = ['name', 'business', 'email', 'website', 'instagram', 'stage', 'next_follow_up', 'notes'];
+      const today = todayFrom(body.today);
+      const before = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
+      if (!before) throw new HttpError(404, 'Not found');
+      if ('instagram' in body) body.instagram = igHandle(body.instagram) || String(body.instagram || '').trim();
+      const fields = ['name', 'business', 'email', 'website', 'instagram', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
       const sets = [];
       const args = [];
       for (const f of fields) {
         if (!(f in body)) continue;
         let v = body[f];
-        if (f === 'stage' && !STAGES.includes(v)) throw new HttpError(400, 'Unknown stage');
-        if (f === 'next_follow_up') {
+        if (['next_follow_up', 'deadline', 'last_touch'].includes(f)) {
           if (v === '' || v === null) v = null;
           else if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new HttpError(400, 'Date must be YYYY-MM-DD');
         } else v = String(v ?? '').slice(0, 5000);
         sets.push(`${f} = ?`);
         args.push(v);
       }
+      if ('value' in body) {
+        const v = body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, '')));
+        if (v !== null && !Number.isFinite(v)) throw new HttpError(400, 'Value must be a number');
+        sets.push('value = ?'); args.push(v);
+      }
+      if ('hot' in body) { sets.push('hot = ?'); args.push(body.hot ? 1 : 0); }
+      if ('touches' in body) { sets.push('touches = ?'); args.push(Math.max(0, Math.min(20, Number(body.touches) || 0))); }
+      if ('stage' in body && !STAGES.includes(body.stage)) throw new HttpError(400, 'Unknown stage');
       if ('opt_in_at' in body) {
         const v = body.opt_in_at;
         if (v === null || v === '') {
@@ -249,12 +425,12 @@ async function handleApi(request, env, url) {
         }
       }
       if ('phone' in body) {
-        const phone = normalizePhone(body.phone);
-        if (!phone) throw new HttpError(400, 'Phone number not recognized. Use +countrycode for non-US numbers.');
+        const phone = String(body.phone || '').trim() ? normalizePhone(body.phone) : null;
+        if (phone === null && String(body.phone || '').trim()) throw new HttpError(400, 'Phone number not recognized. Use +countrycode for non-US numbers.');
         sets.push('phone = ?');
         args.push(phone);
       }
-      if (!sets.length) throw new HttpError(400, 'Nothing to update');
+      if (!sets.length && !('stage' in body)) throw new HttpError(400, 'Nothing to update');
       sets.push('updated_at = ?');
       args.push(nowIso(), id);
       try {
@@ -263,6 +439,7 @@ async function handleApi(request, env, url) {
         if (String(e).includes('UNIQUE')) throw new HttpError(409, 'Another contact already has that number');
         throw e;
       }
+      if ('stage' in body && body.stage !== before.stage) await changeStage(db, id, body.stage, today);
       const contact = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
       return json({ contact });
     }
@@ -270,6 +447,7 @@ async function handleApi(request, env, url) {
       await db.batch([
         db.prepare('DELETE FROM messages WHERE contact_id = ?').bind(id),
         db.prepare('DELETE FROM calls WHERE contact_id = ?').bind(id),
+        db.prepare('DELETE FROM tasks WHERE contact_id = ?').bind(id),
         db.prepare('DELETE FROM contacts WHERE id = ?').bind(id),
       ]);
       return json({ ok: true });
@@ -301,6 +479,7 @@ async function handleApi(request, env, url) {
     const contact = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
     if (!contact) throw new HttpError(404, 'Not found');
     if (contact.opted_out) throw new HttpError(409, 'This contact texted STOP. You cannot text them unless they text START.');
+    if (!contact.phone) throw new HttpError(409, 'Add a phone number for this contact first.');
     if (!contact.opt_in_at) throw new HttpError(409, 'Log their OK to be texted first (where and when they agreed).');
     let text = String(body || '').trim();
     if (!text) throw new HttpError(400, 'Message is empty');
@@ -383,20 +562,41 @@ function optOutLine(env) {
 }
 
 async function createContact(db, body) {
-  const phone = normalizePhone(body.phone);
-  if (!phone) throw new HttpError(400, 'Phone number not recognized. Use +countrycode for non-US numbers.');
-  const stage = STAGES.includes(body.stage) ? body.stage : 'Leads';
-  const followUp = /^\d{4}-\d{2}-\d{2}$/.test(body.next_follow_up || '') ? body.next_follow_up : null;
+  const hasPhone = String(body.phone ?? '').trim() !== '';
+  const phone = hasPhone ? normalizePhone(body.phone) : null;
+  if (hasPhone && !phone) throw new HttpError(400, 'Phone number not recognized. Use +countrycode for non-US numbers.');
   const s = (v) => String(v ?? '').trim().slice(0, 5000);
+  const instagram = igHandle(body.instagram) || s(body.instagram);
+  if (!phone && !instagram && !s(body.email) && !s(body.name) && !s(body.business)) {
+    throw new HttpError(400, 'Add at least a phone, Instagram, email or name');
+  }
+  const stage = STAGES.includes(body.stage) ? body.stage : 'Leads';
+  const followUp = isDate(body.next_follow_up) ? body.next_follow_up : null;
+  const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
-    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
-      .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), s(body.instagram), stage, followUp, s(body.notes))
+    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+      .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), instagram, stage, followUp, s(body.notes),
+        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10))
       .first();
   } catch (e) {
     if (String(e).includes('UNIQUE')) throw new HttpError(409, 'A contact with that number already exists');
     throw e;
   }
+}
+
+// Move a deal to a new stage: stamp the date, add that stage's tasks, set a delivery deadline when a build starts.
+async function changeStage(db, id, stage, today) {
+  const stmts = [db.prepare(`UPDATE contacts SET stage = ?, stage_since = ?,
+    deadline = CASE WHEN ? = 'In build' AND deadline IS NULL THEN ? ELSE deadline END,
+    next_follow_up = CASE WHEN ? = 'Closed won + site live' THEN NULL ELSE next_follow_up END,
+    updated_at = ? WHERE id = ?`).bind(stage, today, stage, addDays(today, 7), stage, nowIso(), id)];
+  for (const [title, days] of STAGE_TASKS[stage] || []) {
+    stmts.push(db.prepare(`INSERT INTO tasks (contact_id, title, due, auto)
+      SELECT ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE contact_id = ? AND title = ? AND done = 0)`)
+      .bind(id, title, addDays(today, days), id, title));
+  }
+  await db.batch(stmts);
 }
 
 // Twilio Access Token (JWT) for the Voice JS SDK, signed with an API key secret.

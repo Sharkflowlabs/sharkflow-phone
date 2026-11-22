@@ -8,7 +8,7 @@ async function tw(path,params,bad){const url=B+path;const data=url+Object.keys(p
 ok((await api('/api/contacts')).status===401,'API needs login');
 ok((await api('/api/login',{method:'POST',body:{password:'wrong'}})).status===401,'wrong password rejected');
 ok((await api('/api/login',{method:'POST',body:{password:'test-pass'}})).status===200 && cookie,'login works');
-const me=await api('/api/me'); ok(me.data.stages.length===8 && me.data.callingReady,'me + stages');
+const me=await api('/api/me'); ok(me.data.stages.length===9 && me.data.callingReady,'me + stages');
 const c=await api('/api/contacts',{method:'POST',body:{phone:'(555) 201-3344',name:'Mike',business:'Mike Roofing'}}); ok(c.status===201 && c.data.contact.phone==='+15552013344','create contact normalizes phone');
 ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).status===409,'duplicate blocked');
 const id=c.data.contact.id;
@@ -49,7 +49,7 @@ await tw('/twilio/recording',{CallSid:'CA1',RecordingSid:'RE9',RecordingDuration
 { const t3=await api(`/api/contacts/${id}/timeline`); ok(t3.data.items.some(i=>i.type==='call'&&i.status==='voicemail'),'call recording does not overwrite voicemail'); }
 const t=await api('/api/voice-token'); const [h,p,s]=t.data.token.split('.'); const exp=crypto.createHmac('sha256','keysecret').update(h+'.'+p).digest('base64url');
 const pl=JSON.parse(Buffer.from(p,'base64url')); ok(s===exp && pl.grants.voice.outgoing.application_sid==='AP_test' && pl.grants.identity==='owner','voice token signed correctly');
-ok((await fetch(B+'/').then(r=>r.text())).includes('Sharkflow Phone'),'UI served');
+ok((await fetch(B+'/').then(r=>r.text())).includes('Sharkflow CRM'),'UI served');
 ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
 
 { const r=await fetch(B+'/public/optin',{method:'POST',headers:{'content-type':'application/json',origin:'https://evil.example'},body:JSON.stringify({phone:'5553334444',consent:true})}); ok(r.status===403,'opt-in form rejects other sites'); }
@@ -66,3 +66,25 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   c=(await api('/api/contacts?q=UK%20Plumb')).data.contacts[0]; ok(r.status===200 && c && c.phone==='+447700900123' && c.opt_in_channel==='Website form','UK lead with consent logged as opt-in');
   r=await fetch(B+'/public/lead',{method:'POST',headers:H,body:JSON.stringify({phone:'5551112222',agree_terms:true,company_website_hp:'spam'})});
   ok(r.status===200 && !(await api('/api/contacts?q=5551112222')).data.contacts.length,'honeypot drops bots'); }
+
+// ---------- CRM ----------
+{ const J=(b)=>({method:'POST',body:b});
+  const p=await api('/api/contacts',J({instagram:'https://www.instagram.com/acme.roof/',business:'Acme Roof'}));
+  ok(p.status===201 && p.data.contact.phone===null && p.data.contact.instagram==='acme.roof','contact without phone (Instagram only)');
+  ok((await api('/api/contacts',J({}))).status===400,'empty contact rejected');
+  const pid=p.data.contact.id;
+  ok((await api(`/api/contacts/${pid}/messages`,J({body:'hi'}))).status===409,'cannot text without a phone');
+  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Contacted' && r.data.contact.next_follow_up==='2026-11-24','touch 1 -> Contacted, follow up in 2 days');
+  for (let i=0;i<3;i++) r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'}));
+  ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='No response' && r.data.contact.next_follow_up==='2027-02-20','4 touches with no reply -> Lost, retry in 90 days');
+  r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In discussion' && r.data.contact.touches===0,'replied -> In discussion');
+  let tk=await api(`/api/tasks?contact=${pid}`); ok(tk.data.tasks.some(t=>t.title==='Send the mockup' && t.due==='2026-11-23'),'stage change adds auto task');
+  r=await api(`/api/contacts/${pid}`,{method:'PATCH',body:{stage:'In build',value:'$1,200',hot:true,today:'2026-11-22'}});
+  ok(r.data.contact.value===1200 && r.data.contact.hot===1 && r.data.contact.deadline==='2026-11-29','In build sets value, hot and 7 day deadline');
+  r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In build','touch on active deal keeps stage');
+  const nt=await api('/api/tasks',J({title:'Call back',due:'2026-11-21'})); ok(nt.status===201,'task created');
+  ok((await api(`/api/tasks/${nt.data.task.id}`,{method:'PATCH',body:{done:true}})).data.task.done===1,'task done');
+  const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.won_value>=1200,'stats tiles');
+  const pr=await api('/api/prospects',J({lines:['@new.paint, New Paint','instagram.com/acme.roof','!!bad']})); ok(pr.data.added===1 && pr.data.skipped===2,'bulk Instagram paste skips duplicates');
+  ok((await api('/api/pipeline')).data.contacts.length>=3,'pipeline list');
+  ok((await api(`/api/contacts/${pid}`,{method:'DELETE',body:{}})).status===200,'delete contact with tasks'); }
