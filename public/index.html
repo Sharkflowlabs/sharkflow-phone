@@ -4,8 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#0A1628">
+  <meta name="theme-color" content="#0B1220">
   <title>Sharkflow CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -20,179 +22,276 @@
   </section>
 
   <div id="shell" class="shell" hidden>
-  <header class="topbar">
-    <div class="brand"><span class="fin"></span><span class="brand-text">sharkflow <b>CRM</b></span></div>
-    <nav class="modes" role="tablist">
-      <button data-mode="today" class="mode">Today <span id="todayCount" class="count"></span></button>
-      <button data-mode="board" class="mode">Pipeline</button>
-      <button data-mode="inbox" class="mode">Contacts <span id="inboxCount" class="count"></span></button>
+    <!-- Left nav -->
+    <nav class="rail" aria-label="Main">
+      <a class="rail-brand" href="#home" aria-label="Home"><span class="fin"></span></a>
+      <a class="nav" data-page="home" href="#home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span><i id="homeCount" class="badge"></i></a>
+      <a class="nav" data-page="dialer" href="#dialer"><svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.2 15.2 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.6a1 1 0 0 1-.25 1z"/></svg><span>Dialer</span></a>
+      <a class="nav" data-page="pipeline" href="#pipeline"><svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z"/></svg><span>Pipeline</span></a>
+      <a class="nav" data-page="contacts" href="#contacts"><svg viewBox="0 0 24 24"><path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.7 0-6 1.3-6 3.5V19h6v-2.5c0-1.2.5-2.3 1.4-3.2A9 9 0 0 0 8 13zm8 0c-3 0-7 1.5-7 4v2h14v-2c0-2.5-4-4-7-4z"/></svg><span>Contacts</span><i id="inboxCount" class="badge"></i></a>
+      <div class="rail-foot">
+        <span id="phoneStatus" class="dot" title="Calling off"></span>
+        <button class="nav small" id="importBtn" title="Import CSV"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span>Import</span></button>
+        <button class="nav small" id="logoutBtn" title="Sign out"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Sign out</span></button>
+      </div>
     </nav>
-    <button class="icon-btn" id="newBtn" title="New contact" aria-label="New contact">+</button>
-  </header>
 
-  <!-- Today -->
-  <section id="today" class="page" hidden>
-    <div class="page-inner">
-      <div class="tiles" id="tiles"></div>
-      <div class="today-grid">
-        <section class="card">
-          <h2>Do today</h2>
-          <ul id="doList" class="worklist"></ul>
-          <form id="taskForm" class="task-add">
-            <input id="taskTitle" placeholder="Add a task, e.g. Email Hughes the invoice" maxlength="300" required>
-            <input id="taskDue" type="date" aria-label="Due date">
-            <button class="btn primary" type="submit">Add</button>
-          </form>
-        </section>
-        <section class="card">
-          <h2>Follow-ups due</h2>
-          <p class="muted">Log a touch each time you DM, email or call with no reply. The next follow-up is set for you (2, 3, then 5 days). After 4 touches with no reply the deal moves to Lost and comes back in 90 days.</p>
-          <ul id="followList" class="worklist"></ul>
-        </section>
-        <section class="card">
-          <h2>Stuck deals</h2>
-          <ul id="staleList" class="worklist"></ul>
-          <h2 class="sub">Coming up</h2>
-          <ul id="upcomingList" class="worklist"></ul>
-        </section>
-        <section class="card">
-          <h2>Add prospects</h2>
-          <p class="muted">Paste Instagram links or @handles, one per line. Add a name after a comma if you like.</p>
-          <form id="prospectForm" class="prospect-form">
-            <textarea id="prospectLines" rows="6" placeholder="https://instagram.com/acmeroofing, Acme Roofing&#10;@bestpaintersla"></textarea>
-            <div class="row end"><span id="prospectResult" class="muted"></span><button class="btn primary" type="submit">Add to Leads</button></div>
-          </form>
-        </section>
-      </div>
-    </div>
-  </section>
-
-  <!-- Pipeline board -->
-  <section id="board" class="page" hidden>
-    <div class="board-bar">
-      <input id="boardSearch" type="search" placeholder="Search deals">
-      <label class="check"><input type="checkbox" id="showClosed"> Show Later and Lost</label>
-      <span class="muted" id="boardHint">Drag a card to change its stage.</span>
-    </div>
-    <div class="board" id="boardCols"></div>
-  </section>
-
-  <!-- Contacts / inbox -->
-  <div id="app" class="app" hidden>
-    <aside class="sidebar">
-      <div class="views" role="tablist">
-        <button data-view="" class="chip active">All</button>
-        <button data-view="unread" class="chip">Unread <span id="unreadCount" class="count"></span></button>
-        <button data-view="due" class="chip">Follow up <span id="dueCount" class="count"></span></button>
-        <button data-view="hot" class="chip">Hot</button>
-      </div>
-      <div class="filters">
-        <input id="search" type="search" placeholder="Search name, business, number">
-        <select id="stageFilter" aria-label="Filter by stage"><option value="">All stages</option></select>
-      </div>
-      <ul id="contactList" class="contact-list"></ul>
-      <footer class="side-foot">
-        <span id="numberLabel" class="muted"></span>
-        <span id="phoneStatus" class="pill">Calling off</span>
-        <button class="link" id="importBtn">Import CSV</button>
-        <button class="link" id="logoutBtn">Sign out</button>
-      </footer>
-    </aside>
-
-    <main class="detail" id="detail">
-      <div class="empty" id="emptyState">
-        <p>Pick a contact, or press <b>+</b> to add one.</p>
-        <div class="dialpad-inline">
-          <input id="quickDial" type="tel" placeholder="Dial any number">
-          <button class="btn primary" id="quickDialBtn">Call</button>
-        </div>
-      </div>
-
-      <div id="contactView" class="contact-view" hidden>
-        <header class="contact-head">
-          <button class="icon-btn back" id="backBtn" aria-label="Back to list">&#8592;</button>
-          <div class="who">
-            <h1 id="cName"></h1>
-            <div class="muted" id="cSub"></div>
-          </div>
-          <a class="btn" id="igBtn" target="_blank" rel="noopener" hidden>Instagram</a>
-          <button class="btn call" id="callBtn">Call</button>
-          <button class="icon-btn" id="infoToggle" aria-label="Show details" title="Details">i</button>
+    <main class="main">
+      <!-- HOME -->
+      <section id="page-home" class="page" hidden>
+        <header class="page-head">
+          <div><h1 id="hello">Today</h1><p class="muted" id="helloSub"></p></div>
+          <div class="head-actions"><a class="btn gold" href="#dialer">Start calling</a><button class="btn" data-new>+ Contact</button></div>
         </header>
-
-        <div class="contact-body">
-          <section class="timeline-wrap">
-            <ol id="timeline" class="timeline"></ol>
-            <div id="optedOutBanner" class="banner" hidden>This contact texted STOP. Texting is blocked until they text START.</div>
-            <form id="optInForm" class="optin" hidden>
-              <b>Log their OK before texting</b>
-              <span class="muted">Texting is locked until you record where they agreed to get texts, e.g. they said yes to “Can I text you the demo link?”</span>
-              <div class="optin-grid">
-                <label>Where<select id="oiChannel" required></select></label>
-                <label>When<input id="oiDate" type="date" required></label>
-              </div>
-              <label>What you asked and what they said<input id="oiNote" placeholder="IG DM: asked to text the demo link, they said “sure, send it”" required></label>
-              <div class="row end"><button class="btn primary" type="submit">Save opt-in</button></div>
+        <div class="kpis" id="kpis"></div>
+        <div class="funnel card" id="funnel"></div>
+        <div class="home-grid">
+          <section class="card">
+            <div class="card-head"><h2>Tasks</h2><span class="muted" id="taskSummary"></span></div>
+            <ul id="doList" class="worklist"></ul>
+            <form id="taskForm" class="task-add">
+              <input id="taskTitle" placeholder="Add a task" maxlength="300" required>
+              <input id="taskDue" type="date" aria-label="Due date">
+              <button class="btn primary" type="submit">Add</button>
             </form>
-            <form id="composer" class="composer">
-              <textarea id="msgInput" rows="2" placeholder="Write a text…" maxlength="1500"></textarea>
-              <div class="composer-row">
-                <label class="check"><input type="checkbox" id="optOutCheck"> Add “<span id="optOutText"></span>”</label>
-                <span id="charCount" class="muted"></span>
-                <button class="btn primary" id="sendBtn" type="submit">Send</button>
-              </div>
+            <details class="upcoming"><summary>Next 7 days</summary><ul id="upcomingList" class="worklist"></ul></details>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>Follow-ups due</h2><span class="muted" id="followSummary"></span></div>
+            <ul id="followList" class="worklist"></ul>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>Stuck deals</h2></div>
+            <ul id="staleList" class="worklist"></ul>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>Add prospects</h2></div>
+            <p class="muted">Paste Instagram links or @handles, one per line. Add a name after a comma.</p>
+            <form id="prospectForm" class="prospect-form">
+              <textarea id="prospectLines" rows="5" placeholder="https://instagram.com/acmeroofing, Acme Roofing&#10;@bestpaintersla"></textarea>
+              <div class="row end"><span id="prospectResult" class="muted"></span><button class="btn primary" type="submit">Add to Prospects</button></div>
             </form>
           </section>
+        </div>
+      </section>
 
-          <aside class="info" id="info">
-            <div class="deal-box">
-              <label>Stage<select id="fStage"></select></label>
-              <div class="deal-row">
-                <label>Value ($)<input id="fValue" inputmode="numeric" placeholder="e.g. 400"></label>
-                <label class="check hot"><input type="checkbox" id="fHot"> Hot</label>
+      <!-- DIALER -->
+      <section id="page-dialer" class="page dialer" hidden>
+        <header class="page-head">
+          <div><h1>Dialer</h1><p class="muted" id="dialerSub">Work your list one call at a time.</p></div>
+          <div class="session" id="sessionStats"></div>
+        </header>
+        <div id="dialerNotice" class="notice" hidden></div>
+        <div class="dial-grid">
+          <aside class="card queue">
+            <div class="card-head"><h2>Queue</h2><span class="muted" id="queueCount"></span></div>
+            <select id="queueFilter" aria-label="Which list to call">
+              <option value="due">Follow-ups due</option>
+              <option value="Attempt to connect">Attempt to connect</option>
+              <option value="Prospects">Prospects</option>
+              <option value="Connected">Connected</option>
+              <option value="Interested">Interested</option>
+              <option value="all">Everyone with a phone</option>
+            </select>
+            <ol id="queueList" class="queue-list"></ol>
+          </aside>
+
+          <section class="card dial-main" id="dialMain">
+            <div id="dialEmpty" class="dial-empty">
+              <p><b>No one to call in this list.</b></p>
+              <p class="muted">Only contacts with a phone number show up here. Add numbers on a contact's record, or import a CSV.</p>
+              <div class="dialpad-inline"><input id="quickDial" type="tel" placeholder="Dial any number"><button class="btn call" id="quickDialBtn">Call</button></div>
+            </div>
+            <div id="dialCard" hidden>
+              <div class="dial-who">
+                <span class="avatar xl" id="dAvatar"></span>
+                <div class="grow">
+                  <h2 id="dName"></h2>
+                  <div class="muted" id="dSub"></div>
+                  <div class="row wrap" id="dTags"></div>
+                </div>
+                <a class="link" id="dOpen" href="#">Open record</a>
               </div>
+              <div class="dial-phone">
+                <span class="big-number" id="dPhone"></span>
+                <span class="local-time muted" id="dLocal"></span>
+              </div>
+              <div class="dial-controls">
+                <button class="btn call xl" id="dCall">Call</button>
+                <button class="btn danger xl" id="dHang" hidden>Hang up</button>
+                <button class="btn" id="dMute" hidden>Mute</button>
+                <button class="btn" id="dKeys" hidden>Keypad</button>
+                <span class="call-state" id="dState"></span>
+                <button class="btn ghost" id="dSkip">Skip</button>
+              </div>
+              <div id="dKeypad" class="keypad light" hidden></div>
+              <div class="dial-context">
+                <div><span class="muted">Next step</span><p id="dNext">-</p></div>
+                <div><span class="muted">Last activity</span><p id="dLast">-</p></div>
+              </div>
+              <label>Call notes<textarea id="dNotes" rows="3" placeholder="What did they say? These go on their timeline."></textarea></label>
+              <label class="check optin-yes"><input type="checkbox" id="dOptIn"> They said yes to getting texts (logs their opt-in, channel: Phone call)</label>
+              <div class="outcomes" id="outcomes"></div>
+              <div class="row between"><label class="check"><input type="checkbox" id="autoNext" checked> Go to the next contact after logging</label><label class="check cb">Call back on<input id="dCallback" type="date"></label></div>
+            </div>
+          </section>
+
+          <aside class="card script">
+            <div class="card-head"><h2>Script</h2><button class="link" id="scriptReset">Reset</button></div>
+            <div id="scriptBox" class="script-box" contenteditable="true" spellcheck="false"></div>
+            <p class="muted small">Edit freely. It's saved in this browser.</p>
+          </aside>
+        </div>
+      </section>
+
+      <!-- PIPELINE -->
+      <section id="page-pipeline" class="page board-page" hidden>
+        <header class="page-head">
+          <div><h1>Pipeline</h1><p class="muted" id="boardSub"></p></div>
+          <div class="head-actions">
+            <input id="boardSearch" type="search" placeholder="Search deals">
+            <label class="check"><input type="checkbox" id="showLost"> Show Lost</label>
+            <button class="btn" data-new>+ Deal</button>
+          </div>
+        </header>
+        <div class="board" id="boardCols"></div>
+      </section>
+
+      <!-- CONTACTS -->
+      <section id="page-contacts" class="page" hidden>
+        <header class="page-head">
+          <div><h1>Contacts</h1><p class="muted" id="contactsSub"></p></div>
+          <div class="head-actions"><button class="btn primary" data-new>+ Contact</button></div>
+        </header>
+        <div class="table-card card">
+          <div class="table-tools">
+            <div class="views" role="tablist">
+              <button data-view="" class="tab active">All</button>
+              <button data-view="unread" class="tab">Unread <span id="unreadCount" class="count"></span></button>
+              <button data-view="due" class="tab">Follow up <span id="dueCount" class="count"></span></button>
+              <button data-view="hot" class="tab">Hot</button>
+            </div>
+            <div class="filters">
+              <input id="search" type="search" placeholder="Search name, business, number, Instagram">
+              <select id="stageFilter" aria-label="Filter by stage"><option value="">All stages</option></select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="ctable">
+              <thead><tr><th>Name</th><th>Stage</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next follow-up</th><th class="hide-s">Last activity</th></tr></thead>
+              <tbody id="contactRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- RECORD -->
+      <section id="page-record" class="page record" hidden>
+        <div class="crumbs"><a href="#contacts" id="backBtn">&#8592; Contacts</a></div>
+        <div class="record-grid">
+          <aside class="card rec-left">
+            <div class="rec-id">
+              <span class="avatar lg" id="rAvatar"></span>
+              <h1 id="cName"></h1>
+              <div class="muted" id="cSub"></div>
+              <div class="quick">
+                <button class="qa" id="qaNote" title="Note"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zM8 11h8M8 15h8M8 7h5"/></svg><span>Note</span></button>
+                <button class="qa" id="qaText" title="Text"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H8l-4 4z"/></svg><span>Text</span></button>
+                <button class="qa" id="callBtn" title="Call"><svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.2 15.2 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.6a1 1 0 0 1-.25 1z"/></svg><span>Call</span></button>
+                <a class="qa" id="igBtn" target="_blank" rel="noopener" title="Instagram"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="5"/><circle cx="12" cy="12" r="3.5"/></svg><span>DM</span></a>
+                <a class="qa" id="mailBtn" title="Email"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 6l9 7 9-7"/></svg><span>Email</span></a>
+              </div>
+            </div>
+            <details class="props" open>
+              <summary>About this contact</summary>
+              <label>Business<input id="fBusiness"></label>
+              <label>Contact name<input id="fName"></label>
+              <label>Phone<input id="fPhone" type="tel"></label>
+              <label>Email<input id="fEmail" type="email"></label>
+              <label>Website<input id="fWebsite"></label>
+              <label>Instagram<input id="fInstagram"></label>
+              <label>Notes<textarea id="fNotes" rows="4"></textarea></label>
+              <div class="optin-record" id="optInRecord" hidden>
+                <span class="muted">Opted in to texts</span>
+                <div id="optInText"></div>
+                <button type="button" class="link danger" id="clearOptIn">Remove opt-in</button>
+              </div>
+              <div class="row between"><span class="muted" id="saveState"></span><button type="button" class="link danger" id="deleteBtn">Delete contact</button></div>
+            </details>
+          </aside>
+
+          <section class="card rec-mid">
+            <div class="tabs" role="tablist">
+              <button class="tab active" data-tab="activity">Activity</button>
+              <button class="tab" data-tab="texts">Texts</button>
+            </div>
+            <div id="tabActivity">
+              <form id="noteForm" class="note-form">
+                <div class="seg" role="radiogroup">
+                  <label><input type="radio" name="kind" value="note" checked><span>Note</span></label>
+                  <label><input type="radio" name="kind" value="dm"><span>Logged DM</span></label>
+                  <label><input type="radio" name="kind" value="email"><span>Logged email</span></label>
+                </div>
+                <textarea id="noteInput" rows="2" placeholder="Add a note, or paste the DM or email you sent"></textarea>
+                <div class="row end"><button class="btn primary" type="submit">Save</button></div>
+              </form>
+              <ol id="activity" class="activity"></ol>
+            </div>
+            <div id="tabTexts" class="texts" hidden>
+              <ol id="timeline" class="timeline"></ol>
+              <div id="optedOutBanner" class="banner" hidden>This contact texted STOP. Texting is blocked until they text START.</div>
+              <form id="optInForm" class="optin" hidden>
+                <b>Log their OK before texting</b>
+                <span class="muted">Texting is locked until you record where they agreed to get texts, e.g. they said yes to “Can I text you the demo link?”</span>
+                <div class="optin-grid">
+                  <label>Where<select id="oiChannel" required></select></label>
+                  <label>When<input id="oiDate" type="date" required></label>
+                </div>
+                <label>What you asked and what they said<input id="oiNote" placeholder="IG DM: asked to text the demo link, they said “sure, send it”" required></label>
+                <div class="row end"><button class="btn primary" type="submit">Save opt-in</button></div>
+              </form>
+              <form id="composer" class="composer">
+                <textarea id="msgInput" rows="2" placeholder="Write a text…" maxlength="1500"></textarea>
+                <div class="composer-row">
+                  <label class="check"><input type="checkbox" id="optOutCheck"> Add “<span id="optOutText"></span>”</label>
+                  <span id="charCount" class="muted"></span>
+                  <button class="btn primary" id="sendBtn" type="submit">Send</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <aside class="rec-right">
+            <section class="card deal">
+              <div class="card-head"><h2>Deal</h2><label class="check hot"><input type="checkbox" id="fHot"> Hot</label></div>
+              <div class="stagebar" id="stageBar"></div>
+              <label>Stage<select id="fStage"></select></label>
+              <label>Amount ($)<input id="fValue" inputmode="numeric" placeholder="e.g. 400"></label>
               <label id="lostWrap">Why lost<select id="fLost"><option value="">Pick one</option></select></label>
               <label id="deadlineWrap">Delivery deadline<input id="fDeadline" type="date"></label>
               <label>Next step<input id="fNext" maxlength="300" placeholder="e.g. Send mockup Tuesday"></label>
+              <label>Next follow-up
+                <span class="row"><input id="fFollow" type="date"><button type="button" class="link" data-days="3">+3d</button><button type="button" class="link" data-days="7">+7d</button><button type="button" class="link" id="clearFollow">clear</button></span>
+              </label>
               <div class="touch-row">
                 <span id="touchText" class="muted"></span>
                 <button type="button" class="btn small" id="touchBtn">Log touch</button>
                 <button type="button" class="btn small" id="repliedBtn">They replied</button>
               </div>
-            </div>
-            <label>Next follow-up
-              <span class="row"><input id="fFollow" type="date"><button type="button" class="link" data-days="3">+3d</button><button type="button" class="link" data-days="7">+7d</button><button type="button" class="link" id="clearFollow">clear</button></span>
-            </label>
-            <div class="optin-record" id="optInRecord" hidden>
-              <span class="muted">Opted in to texts</span>
-              <div id="optInText"></div>
-              <button type="button" class="link danger" id="clearOptIn">Remove opt-in</button>
-            </div>
-            <div class="ctasks">
-              <b>Tasks</b>
-              <ul id="cTasks" class="worklist compact"></ul>
-              <form id="cTaskForm" class="task-add">
+            </section>
+            <section class="card">
+              <div class="card-head"><h2>Tasks</h2></div>
+              <ul id="cTasks" class="worklist"></ul>
+              <form id="cTaskForm" class="task-add stack">
                 <input id="cTaskTitle" placeholder="Add a task" maxlength="300" required>
                 <input id="cTaskDue" type="date" aria-label="Due date">
                 <button class="btn small" type="submit">Add</button>
               </form>
-            </div>
-            <label>Name<input id="fName"></label>
-            <label>Business<input id="fBusiness"></label>
-            <label>Phone<input id="fPhone" type="tel"></label>
-            <label>Email<input id="fEmail" type="email"></label>
-            <label>Website<input id="fWebsite"></label>
-            <label>Instagram<input id="fInstagram"></label>
-            <label>Notes<textarea id="fNotes" rows="5"></textarea></label>
-            <div class="row between">
-              <span class="muted" id="saveState"></span>
-              <button type="button" class="link danger" id="deleteBtn">Delete contact</button>
-            </div>
+            </section>
           </aside>
         </div>
-      </div>
+      </section>
     </main>
-  </div>
   </div>
 
   <!-- Call bar -->
@@ -215,19 +314,18 @@
     </div>
   </div>
 
-  <!-- New contact / import dialogs -->
   <dialog id="newDialog">
     <form method="dialog" id="newForm" class="dialog-form">
       <h2>New contact</h2>
       <p class="muted">Fill in at least one way to reach them. A phone is only needed to call or text.</p>
       <label>Business<input name="business"></label>
-      <label>Name<input name="name"></label>
+      <label>Contact name<input name="name"></label>
       <label>Instagram<input name="instagram" placeholder="@handle or link"></label>
       <label>Phone<input name="phone" type="tel" placeholder="(555) 123-4567 or +61…"></label>
       <label>Email<input name="email" type="email"></label>
       <div class="optin-grid">
         <label>Stage<select name="stage" id="newStage"></select></label>
-        <label>Value ($)<input name="value" inputmode="numeric"></label>
+        <label>Amount ($)<input name="value" inputmode="numeric"></label>
       </div>
       <p class="error" id="newError"></p>
       <div class="row end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Add</button></div>

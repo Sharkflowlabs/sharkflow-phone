@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   email TEXT NOT NULL DEFAULT '',
   website TEXT NOT NULL DEFAULT '',
   instagram TEXT NOT NULL DEFAULT '',
-  stage TEXT NOT NULL DEFAULT 'Leads',
+  stage TEXT NOT NULL DEFAULT 'Prospects',
   next_follow_up TEXT,                   -- YYYY-MM-DD or NULL
   notes TEXT NOT NULL DEFAULT '',
   value INTEGER,                         -- deal value in dollars
@@ -63,6 +63,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+-- Notes, logged DMs/emails and dialer outcomes shown on the contact's activity timeline.
+CREATE TABLE IF NOT EXISTS activities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                    -- 'note' | 'email' | 'dm' | 'dial'
+  outcome TEXT,                          -- dialer outcome key for kind = 'dial'
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_activities_contact ON activities(contact_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(done, due);
 CREATE INDEX IF NOT EXISTS idx_tasks_contact ON tasks(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_contact ON messages(contact_id, created_at);

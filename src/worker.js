@@ -2,19 +2,28 @@
 // One Worker serves the UI (from /public), a JSON API under /api, and Twilio webhooks under /twilio.
 
 const STAGES = [
-  'Leads', 'Contacted', 'In discussion', 'Mockup sent',
-  'Pricing & invoicing', 'In build', 'Closed won + site live', 'Later', 'Lost',
+  'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'Lost',
 ];
+const FIRST = 'Prospects';
+const ATC = 'Attempt to connect';
+// Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
+const EARLY = [FIRST, ATC, 'Lost'];
+// Pipeline value is counted from Interested onward.
+const PIPELINE = ['Interested', 'In build'];
+const WON = 'Closed won + site live';
 // Tasks created automatically when a deal moves into a stage: [title, days from today].
 const STAGE_TASKS = {
-  'In discussion': [['Send the mockup', 1]],
-  'Mockup sent': [['Get feedback on the mockup', 2]],
-  'Pricing & invoicing': [['Chase the payment', 3]],
+  'Connected': [['Send the demo link', 1]],
+  'Interested': [['Send mockup and pricing', 1], ['Chase the payment', 4]],
   'In build': [['Collect logo, photos and content', 1], ['Deliver the site', 7]],
   'Closed won + site live': [['Ask for a review and a referral', 3]],
 };
 // A deal is "stale" when it sits in one of these stages longer than this many days with no activity.
-const STALE_DAYS = { 'In discussion': 2, 'Mockup sent': 5, 'Pricing & invoicing': 7, 'In build': 7 };
+const STALE_DAYS = { 'Connected': 3, 'Interested': 5, 'In build': 7 };
+const OUTCOMES = {
+  no_answer: 'No answer', voicemail: 'Left voicemail', connected: 'Connected', interested: 'Interested',
+  not_interested: 'Not interested', callback: 'Call back later', bad_number: 'Wrong number',
+};
 // Days to wait after outreach touch 1, 2 and 3. After touch 4 with no reply the deal goes to Lost (No response) with a 90 day retry.
 const TOUCH_GAPS = [2, 3, 5];
 const MAX_TOUCHES = 4;
@@ -200,6 +209,8 @@ async function handleApi(request, env, url) {
       staleDays: STALE_DAYS,
       lostReasons: LOST_REASONS,
       maxTouches: MAX_TOUCHES,
+      outcomes: OUTCOMES,
+      pipelineStages: PIPELINE,
     });
   }
 
@@ -208,21 +219,23 @@ async function handleApi(request, env, url) {
     const month = today.slice(0, 7);
     const r = await db.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM contacts WHERE stage IN ('In discussion','Mockup sent','Pricing & invoicing','In build')) AS active,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Connected','Interested','In build')) AS active,
         (SELECT COUNT(*) FROM contacts WHERE next_follow_up IS NOT NULL AND next_follow_up <= ? AND stage NOT IN ('Lost')) AS due,
         (SELECT COUNT(*) FROM tasks WHERE done = 0 AND due IS NOT NULL AND due <= ?) AS tasks_due,
-        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Mockup sent','Pricing & invoicing')) AS open_value,
-        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Mockup sent','Pricing & invoicing')) AS open_count,
-        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('In build','Closed won + site live') AND substr(stage_since,1,7) = ?) AS won_value,
-        (SELECT COUNT(*) FROM contacts WHERE stage IN ('In build','Closed won + site live') AND substr(stage_since,1,7) = ?) AS won_count
-    `).bind(today, today, month, month).first();
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Interested','In build')) AS open_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Interested','In build')) AS open_count,
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage = 'Closed won + site live' AND substr(stage_since,1,7) = ?) AS won_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage = 'Closed won + site live' AND substr(stage_since,1,7) = ?) AS won_count,
+        (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND substr(created_at,1,10) = ?) AS dials_today,
+        (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND outcome IN ('connected','interested','not_interested','callback') AND substr(created_at,1,10) = ?) AS connects_today
+    `).bind(today, today, month, month, today, today).first();
     const { results } = await db.prepare('SELECT stage, COUNT(*) AS n, COALESCE(SUM(value),0) AS total FROM contacts GROUP BY stage').all();
     return json({ ...r, stages: results });
   }
 
   if (path === '/api/pipeline' && method === 'GET') {
     const { results } = await db.prepare(`
-      SELECT id, name, business, phone, instagram, stage, value, hot, touches, last_touch, next_step, next_follow_up,
+      SELECT id, name, business, phone, email, website, instagram, stage, value, hot, touches, last_touch, next_step, next_follow_up,
         stage_since, deadline, lost_reason, unread, last_activity_at, created_at
       FROM contacts ORDER BY hot DESC, COALESCE(next_follow_up, '9999') ASC, updated_at DESC LIMIT 2000`).all();
     return json({ contacts: results });
@@ -232,7 +245,7 @@ async function handleApi(request, env, url) {
     // Paste a list of Instagram links or handles (one per line, optional "name" after a comma or tab).
     const { lines, stage } = await readJson(request);
     if (!Array.isArray(lines) || lines.length > 500) throw new HttpError(400, 'Send 1 to 500 lines');
-    const st = STAGES.includes(stage) ? stage : 'Leads';
+    const st = STAGES.includes(stage) ? stage : FIRST;
     let added = 0, skipped = 0;
     const today = nowIso().slice(0, 10);
     for (const line of lines) {
@@ -292,29 +305,56 @@ async function handleApi(request, env, url) {
     }
   }
 
+  if ((m = path.match(/^\/api\/contacts\/(\d+)\/notes$/)) && method === 'POST') {
+    // Log a note, an email or a DM on the contact's activity timeline.
+    const id = Number(m[1]);
+    const body = await readJson(request);
+    const kind = ['note', 'email', 'dm'].includes(body.kind) ? body.kind : 'note';
+    const text = String(body.body || '').trim().slice(0, 4000);
+    if (!text) throw new HttpError(400, 'Write something first');
+    const ts = nowIso();
+    await db.batch([
+      db.prepare('INSERT INTO activities (contact_id, kind, body, created_at) VALUES (?, ?, ?, ?)').bind(id, kind, text, ts),
+      db.prepare('UPDATE contacts SET last_activity_at = ?, updated_at = ? WHERE id = ?').bind(ts, ts, id),
+    ]);
+    return json({ ok: true });
+  }
+
+  if ((m = path.match(/^\/api\/contacts\/(\d+)\/disposition$/)) && method === 'POST') {
+    // Dialer outcome: logs the dial on the timeline and moves the deal along.
+    const id = Number(m[1]);
+    const body = await readJson(request);
+    const today = todayFrom(body.today);
+    const outcome = body.outcome;
+    if (!OUTCOMES[outcome]) throw new HttpError(400, 'Pick an outcome');
+    const c = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
+    if (!c) throw new HttpError(404, 'Not found');
+    const note = String(body.note || '').trim().slice(0, 4000);
+    const ts = nowIso();
+    await db.prepare("INSERT INTO activities (contact_id, kind, outcome, body, created_at) VALUES (?, 'dial', ?, ?, ?)").bind(id, outcome, note, ts).run();
+    if (outcome === 'no_answer' || outcome === 'voicemail') {
+      const r = await logTouchFor(db, c, today, '');
+      return json({ contact: r });
+    }
+    if (outcome === 'connected' && EARLY.includes(c.stage)) await changeStage(db, id, 'Connected', today);
+    if (outcome === 'interested' && c.stage !== 'Interested' && !['In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
+    const sets = ['last_activity_at = ?', 'updated_at = ?'];
+    const args = [ts, ts];
+    if (outcome === 'connected' || outcome === 'interested') { sets.push('next_follow_up = ?', "lost_reason = ''"); args.push(addDays(today, outcome === 'interested' ? 1 : 2)); }
+    if (outcome === 'not_interested') { sets.push("stage = 'Lost'", "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?'); args.push(today); }
+    if (outcome === 'callback') { sets.push('next_follow_up = ?'); args.push(isDate(body.callback) ? body.callback : addDays(today, 1)); }
+    if (outcome === 'bad_number') { sets.push("notes = CASE WHEN notes = '' THEN ? ELSE notes || char(10) || ? END"); args.push(`${today}: wrong number ${c.phone || ''}`, `${today}: wrong number ${c.phone || ''}`); }
+    const contact = await db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, id).first();
+    return json({ contact });
+  }
+
   if ((m = path.match(/^\/api\/contacts\/(\d+)\/touch$/)) && method === 'POST') {
     // Log one outreach attempt (DM, email, call with no answer) and schedule the next one.
     const id = Number(m[1]);
     const body = await readJson(request);
-    const today = todayFrom(body.today);
     const c = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
     if (!c) throw new HttpError(404, 'Not found');
-    const touches = (c.touches || 0) + 1;
-    let stage = c.stage === 'Leads' ? 'Contacted' : c.stage;
-    let follow, reason = c.lost_reason;
-    // The no-reply cadence only applies before they've answered; later stages just log the touch.
-    const cadence = ['Leads', 'Contacted', 'Later', 'Lost'].includes(c.stage);
-    if (cadence && c.stage === 'Lost') stage = 'Contacted';
-    if (!cadence) follow = addDays(today, 2);
-    else if (touches >= MAX_TOUCHES) {
-      stage = 'Lost'; reason = 'No response'; follow = addDays(today, 90);
-    } else follow = addDays(today, TOUCH_GAPS[touches - 1]);
-    if (cadence && stage !== 'Lost') reason = '';
-    const note = String(body.note || '').trim().slice(0, 300);
-    const notes = note ? `${c.notes ? c.notes + '\n' : ''}${today} touch ${touches}: ${note}` : c.notes;
-    const contact = await db.prepare(`UPDATE contacts SET touches = ?, last_touch = ?, stage = ?, lost_reason = ?, next_follow_up = ?,
-      stage_since = CASE WHEN stage = ? THEN stage_since ELSE ? END, notes = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
-      .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), id).first();
+    const contact = await logTouchFor(db, c, todayFrom(body.today), body.note);
     return json({ contact });
   }
 
@@ -324,8 +364,8 @@ async function handleApi(request, env, url) {
     const today = todayFrom((await readJson(request)).today);
     const c = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
     if (!c) throw new HttpError(404, 'Not found');
-    const early = ['Leads', 'Contacted', 'Later', 'Lost'].includes(c.stage);
-    if (early) await changeStage(db, id, 'In discussion', today);
+    const early = EARLY.includes(c.stage);
+    if (early) await changeStage(db, id, 'Connected', today);
     const contact = await db.prepare(`UPDATE contacts SET touches = 0, lost_reason = '', next_follow_up = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
       .bind(addDays(today, 1), nowIso(), nowIso(), id).first();
     return json({ contact });
@@ -448,6 +488,7 @@ async function handleApi(request, env, url) {
         db.prepare('DELETE FROM messages WHERE contact_id = ?').bind(id),
         db.prepare('DELETE FROM calls WHERE contact_id = ?').bind(id),
         db.prepare('DELETE FROM tasks WHERE contact_id = ?').bind(id),
+        db.prepare('DELETE FROM activities WHERE contact_id = ?').bind(id),
         db.prepare('DELETE FROM contacts WHERE id = ?').bind(id),
       ]);
       return json({ ok: true });
@@ -456,13 +497,15 @@ async function handleApi(request, env, url) {
 
   if ((m = path.match(/^\/api\/contacts\/(\d+)\/timeline$/)) && method === 'GET') {
     const id = Number(m[1]);
-    const [msgs, calls] = await db.batch([
+    const [msgs, calls, acts] = await db.batch([
       db.prepare('SELECT id, direction, body, status, error, created_at FROM messages WHERE contact_id = ? ORDER BY id DESC LIMIT 300').bind(id),
       db.prepare('SELECT id, direction, status, duration, recording_sid, recording_duration, created_at FROM calls WHERE contact_id = ? ORDER BY id DESC LIMIT 100').bind(id),
+      db.prepare('SELECT id, kind, outcome, body, created_at FROM activities WHERE contact_id = ? ORDER BY id DESC LIMIT 200').bind(id),
     ]);
     const items = [
       ...msgs.results.reverse().map((x) => ({ type: 'message', ...x })),
       ...calls.results.reverse().map((x) => ({ type: 'call', ...x, recording_sid: undefined, has_recording: Boolean(x.recording_sid) })),
+      ...acts.results.reverse().map((x) => ({ type: 'activity', ...x, outcome_label: OUTCOMES[x.outcome] || '' })),
     ].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
     return json({ items });
   }
@@ -521,7 +564,7 @@ async function handleApi(request, env, url) {
     await db.batch([
       db.prepare("INSERT INTO messages (contact_id, direction, body, twilio_sid, status, created_at) VALUES (?, 'out', ?, ?, ?, ?)")
         .bind(id, text, data.sid, data.status || 'queued', ts),
-      db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Leads' THEN 'Contacted' ELSE stage END WHERE id = ?").bind(ts, id),
+      db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(ts, id),
     ]);
     return json({ ok: true, sid: data.sid });
   }
@@ -570,7 +613,7 @@ async function createContact(db, body) {
   if (!phone && !instagram && !s(body.email) && !s(body.name) && !s(body.business)) {
     throw new HttpError(400, 'Add at least a phone, Instagram, email or name');
   }
-  const stage = STAGES.includes(body.stage) ? body.stage : 'Leads';
+  const stage = STAGES.includes(body.stage) ? body.stage : FIRST;
   const followUp = isDate(body.next_follow_up) ? body.next_follow_up : null;
   const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
@@ -585,12 +628,32 @@ async function createContact(db, body) {
   }
 }
 
+async function logTouchFor(db, c, today, note) {
+    const touches = (c.touches || 0) + 1;
+    let stage = c.stage === FIRST ? ATC : c.stage;
+    let follow, reason = c.lost_reason;
+    // The no-reply cadence only applies before they've answered; later stages just log the touch.
+    const cadence = EARLY.includes(c.stage);
+    if (cadence && c.stage === 'Lost') stage = ATC;
+    if (!cadence) follow = addDays(today, 2);
+    else if (touches >= MAX_TOUCHES) {
+      stage = 'Lost'; reason = 'No response'; follow = addDays(today, 90);
+    } else follow = addDays(today, TOUCH_GAPS[touches - 1]);
+    if (cadence && stage !== 'Lost') reason = '';
+    const text = String(note || '').trim().slice(0, 300);
+    const notes = text ? `${c.notes ? c.notes + '\n' : ''}${today} touch ${touches}: ${text}` : c.notes;
+    return db.prepare(`UPDATE contacts SET touches = ?, last_touch = ?, stage = ?, lost_reason = ?, next_follow_up = ?,
+      stage_since = CASE WHEN stage = ? THEN stage_since ELSE ? END, notes = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
+      .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), c.id).first();
+}
+
 // Move a deal to a new stage: stamp the date, add that stage's tasks, set a delivery deadline when a build starts.
 async function changeStage(db, id, stage, today) {
   const stmts = [db.prepare(`UPDATE contacts SET stage = ?, stage_since = ?,
     deadline = CASE WHEN ? = 'In build' AND deadline IS NULL THEN ? ELSE deadline END,
     next_follow_up = CASE WHEN ? = 'Closed won + site live' THEN NULL ELSE next_follow_up END,
-    updated_at = ? WHERE id = ?`).bind(stage, today, stage, addDays(today, 7), stage, nowIso(), id)];
+    touches = CASE WHEN ? IN ('Connected','Interested','In build','Closed won + site live') THEN 0 ELSE touches END,
+    updated_at = ? WHERE id = ?`).bind(stage, today, stage, addDays(today, 7), stage, stage, nowIso(), id)];
   for (const [title, days] of STAGE_TASKS[stage] || []) {
     stmts.push(db.prepare(`INSERT INTO tasks (contact_id, title, due, auto)
       SELECT ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE contact_id = ? AND title = ? AND done = 0)`)
@@ -658,7 +721,7 @@ async function handlePublicLead(request, env, url) {
   const noteLine = [`${day} website form`, lead.trade && `Trade: ${lead.trade}`, lead.message && `Message: ${lead.message}`].filter(Boolean).join(' | ');
   const db = env.DB;
   await db.prepare(`INSERT INTO contacts (phone, name, business, email, website, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes)
-      VALUES (?, ?, ?, ?, ?, 'Leads', ?, ?, ?, 1, ?, ?)
+      VALUES (?, ?, ?, ?, ?, 'Prospects', ?, ?, ?, 1, ?, ?)
     ON CONFLICT(phone) DO UPDATE SET
       name = CASE WHEN contacts.name = '' THEN excluded.name ELSE contacts.name END,
       business = CASE WHEN contacts.business = '' THEN excluded.business ELSE contacts.business END,
@@ -823,7 +886,7 @@ async function handleTwilio(request, env, url) {
       await db.batch([
         db.prepare("INSERT OR IGNORE INTO calls (contact_id, direction, twilio_sid, status, created_at) VALUES (?, 'out', ?, 'calling', ?)")
           .bind(contact.id, p.CallSid, ts),
-        db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Leads' THEN 'Contacted' ELSE stage END WHERE id = ?").bind(ts, contact.id),
+        db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(ts, contact.id),
       ]);
       return twiml(
         `<Dial callerId="${xmlEscape(env.TWILIO_NUMBER)}" answerOnBridge="true" timeout="30" action="${origin}/twilio/dial-done"${dialRecordAttrs(env, origin)}>` +
@@ -859,6 +922,6 @@ async function handleTwilio(request, env, url) {
 async function findOrCreateContact(db, phone) {
   const existing = await db.prepare('SELECT * FROM contacts WHERE phone = ?').bind(phone).first();
   if (existing) return existing;
-  return db.prepare("INSERT INTO contacts (phone, stage) VALUES (?, 'Leads') ON CONFLICT(phone) DO UPDATE SET phone = excluded.phone RETURNING *")
+  return db.prepare("INSERT INTO contacts (phone, stage) VALUES (?, 'Prospects') ON CONFLICT(phone) DO UPDATE SET phone = excluded.phone RETURNING *")
     .bind(phone).first();
 }

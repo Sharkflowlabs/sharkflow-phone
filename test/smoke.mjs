@@ -8,11 +8,11 @@ async function tw(path,params,bad){const url=B+path;const data=url+Object.keys(p
 ok((await api('/api/contacts')).status===401,'API needs login');
 ok((await api('/api/login',{method:'POST',body:{password:'wrong'}})).status===401,'wrong password rejected');
 ok((await api('/api/login',{method:'POST',body:{password:'test-pass'}})).status===200 && cookie,'login works');
-const me=await api('/api/me'); ok(me.data.stages.length===9 && me.data.callingReady,'me + stages');
+const me=await api('/api/me'); ok(me.data.stages.length===7 && me.data.callingReady,'me + stages');
 const c=await api('/api/contacts',{method:'POST',body:{phone:'(555) 201-3344',name:'Mike',business:'Mike Roofing'}}); ok(c.status===201 && c.data.contact.phone==='+15552013344','create contact normalizes phone');
 ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).status===409,'duplicate blocked');
 const id=c.data.contact.id;
-ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{stage:'Mockup sent',next_follow_up:'2026-11-20'}})).data.contact.stage==='Mockup sent','patch stage+followup');
+ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{stage:'Interested',next_follow_up:'2026-11-20'}})).data.contact.stage==='Interested','patch stage+followup');
 ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{stage:'Bogus'}})).status===400,'bad stage rejected');
 const due=await api('/api/contacts?view=due&today=2026-11-22'); ok(due.data.contacts.length===1 && due.data.counts.due===1,'due view');
 ok((await tw('/twilio/sms',{From:'+15552013344',Body:'hi there',MessageSid:'SM1'},true)).status===403,'bad signature rejected');
@@ -74,17 +74,27 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   ok((await api('/api/contacts',J({}))).status===400,'empty contact rejected');
   const pid=p.data.contact.id;
   ok((await api(`/api/contacts/${pid}/messages`,J({body:'hi'}))).status===409,'cannot text without a phone');
-  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Contacted' && r.data.contact.next_follow_up==='2026-11-24','touch 1 -> Contacted, follow up in 2 days');
+  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.next_follow_up==='2026-11-24','touch 1 -> Attempt to connect, follow up in 2 days');
   for (let i=0;i<3;i++) r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'}));
   ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='No response' && r.data.contact.next_follow_up==='2027-02-20','4 touches with no reply -> Lost, retry in 90 days');
-  r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In discussion' && r.data.contact.touches===0,'replied -> In discussion');
-  let tk=await api(`/api/tasks?contact=${pid}`); ok(tk.data.tasks.some(t=>t.title==='Send the mockup' && t.due==='2026-11-23'),'stage change adds auto task');
+  r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Connected' && r.data.contact.touches===0,'replied -> Connected');
+  let tk=await api(`/api/tasks?contact=${pid}`); ok(tk.data.tasks.some(t=>t.title==='Send the demo link' && t.due==='2026-11-23'),'stage change adds auto task');
   r=await api(`/api/contacts/${pid}`,{method:'PATCH',body:{stage:'In build',value:'$1,200',hot:true,today:'2026-11-22'}});
   ok(r.data.contact.value===1200 && r.data.contact.hot===1 && r.data.contact.deadline==='2026-11-29','In build sets value, hot and 7 day deadline');
   r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In build','touch on active deal keeps stage');
   const nt=await api('/api/tasks',J({title:'Call back',due:'2026-11-21'})); ok(nt.status===201,'task created');
   ok((await api(`/api/tasks/${nt.data.task.id}`,{method:'PATCH',body:{done:true}})).data.task.done===1,'task done');
-  const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.won_value>=1200,'stats tiles');
+  const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.open_value>=1200,'pipeline counts In build value');
   const pr=await api('/api/prospects',J({lines:['@new.paint, New Paint','instagram.com/acme.roof','!!bad']})); ok(pr.data.added===1 && pr.data.skipped===2,'bulk Instagram paste skips duplicates');
   ok((await api('/api/pipeline')).data.contacts.length>=3,'pipeline list');
   ok((await api(`/api/contacts/${pid}`,{method:'DELETE',body:{}})).status===200,'delete contact with tasks'); }
+
+{ const J=(b)=>({method:'POST',body:b});
+  const c=await api('/api/contacts',J({phone:'5554443322',business:'Dial Test'})); const id=c.data.contact.id;
+  let r=await api(`/api/contacts/${id}/disposition`,J({outcome:'no_answer',today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.touches===1,'dialer no answer = touch');
+  r=await api(`/api/contacts/${id}/disposition`,J({outcome:'interested',note:'wants demo',today:'2026-11-22'})); ok(r.data.contact.stage==='Interested' && r.data.contact.next_follow_up==='2026-11-23','dialer interested moves stage');
+  ok((await api(`/api/contacts/${id}/disposition`,J({outcome:'bogus'}))).status===400,'bad outcome rejected');
+  ok((await api(`/api/contacts/${id}/notes`,J({body:'Sent DM',kind:'dm'}))).status===200,'log DM note');
+  const tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.filter(i=>i.type==='activity').length===3,'activities on timeline');
+  const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
+  r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
