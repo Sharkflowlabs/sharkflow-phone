@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS calls (
   duration INTEGER,
   recording_sid TEXT,                    -- set when a voicemail was left
   recording_duration INTEGER,
+  to_number TEXT,                        -- number dialled (set for quick calls to numbers not in the CRM)
+  outcome TEXT,                          -- logged disposition (OUTCOMES key)
+  note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 

@@ -100,6 +100,8 @@
     $('fLost').insertAdjacentHTML('beforeend', state.me.lostReasons.map((s) => `<option>${esc(s)}</option>`).join(''));
     $('oiChannel').innerHTML = '<option value="">Pick one</option>' + state.me.optInChannels.map((s) => `<option>${esc(s)}</option>`).join('');
     $('optOutText').textContent = state.me.optOutLine;
+    $('lcOutcomes').innerHTML = Object.entries(state.me.outcomes).map(([k, v]) =>
+      `<button type="button" class="outcome oc-${k}" data-oc="${k}">${esc(v)}</button>`).join('');
     $('outcomes').innerHTML = Object.entries(state.me.outcomes).map(([k, v], i) =>
       `<button type="button" class="outcome oc-${k}" data-outcome="${k}"><kbd>${i + 1}</kbd>${esc(v)}</button>`).join('');
     initScript();
@@ -123,7 +125,7 @@
     if (page === 'home') loadHome().catch((e) => toast(e.message));
     if (page === 'pipeline') loadBoard().catch((e) => toast(e.message));
     if (page === 'contacts') loadContacts().catch((e) => toast(e.message));
-    if (page === 'dialer') loadQueue().catch((e) => toast(e.message));
+    if (page === 'dialer') { loadQueue().catch((e) => toast(e.message)); loadCallLog(); }
     if (page === 'record') openContact(Number(m[1])).catch((e) => toast(e.message));
     document.querySelector('.main').scrollTop = 0;
   }
@@ -833,6 +835,70 @@
     input.focus();
   });
 
+  // ---------- logged calls ----------
+  const lc = { target: null, outcome: '' };
+  function openLogCall({ id, sid, who, answered, known }) {
+    lc.target = id ? { id } : { sid }; lc.outcome = '';
+    $('logCallForm').reset(); $('lcError').textContent = '';
+    $('lcWho').textContent = who || '';
+    $('lcOutcomes').querySelectorAll('.outcome').forEach((b) => b.classList.remove('sel'));
+    $('lcCbWrap').hidden = true; $('lcCallback').value = today(1);
+    $('lcSaveWrap').hidden = known; $('lcSaveFields').hidden = true;
+    if (answered === false) pickOutcome('no_answer');
+    $('logCallDialog').showModal();
+  }
+  function pickOutcome(k) {
+    lc.outcome = k;
+    $('lcOutcomes').querySelectorAll('.outcome').forEach((b) => b.classList.toggle('sel', b.dataset.oc === k));
+    $('lcCbWrap').hidden = k !== 'callback';
+    if (!$('lcSaveWrap').hidden && ['interested', 'connected', 'callback'].includes(k) && !$('lcSave').checked) { $('lcSave').checked = true; $('lcSaveFields').hidden = false; }
+  }
+  $('lcOutcomes').addEventListener('click', (e) => { const b = e.target.closest('[data-oc]'); if (b) pickOutcome(b.dataset.oc); });
+  $('lcSave').addEventListener('change', (e) => { $('lcSaveFields').hidden = !e.target.checked; });
+  $('logCallForm').addEventListener('submit', async (e) => {
+    if (e.submitter && e.submitter.value === 'cancel') { setTimeout(loadCallLog, 300); return; }
+    e.preventDefault();
+    if (!lc.outcome) { $('lcError').textContent = 'Pick what happened on the call.'; return; }
+    const body = { ...lc.target, outcome: lc.outcome, note: $('lcNote').value, callback: $('lcCallback').value, today: today() };
+    if (!$('lcSaveWrap').hidden && $('lcSave').checked) Object.assign(body, { save: true, business: $('lcBusiness').value.trim(), name: $('lcName').value.trim() });
+    $('lcSubmit').disabled = true;
+    try {
+      const r = await api('/api/calls/log', { method: 'POST', body });
+      $('logCallDialog').close();
+      toast(`Logged: ${state.me.outcomes[lc.outcome]}${r.contact ? ' · ' + displayName(r.contact) + ' → ' + r.contact.stage : ''}`);
+      loadCallLog();
+      if (state.page === 'record' && state.current) loadTimeline(true);
+    } catch (err) { $('lcError').textContent = err.message; }
+    finally { $('lcSubmit').disabled = false; }
+  });
+  async function loadCallLog() {
+    try {
+      const { calls } = await api('/api/calls?limit=50');
+      state.callLog = calls;
+      const open = calls.filter((c) => !c.outcome && c.direction === 'out').length;
+      $('callLogSub').textContent = calls.length ? `${calls.length} recent${open ? ` · ${open} not logged yet` : ''}` : '';
+      $('callLogRows').innerHTML = calls.map((c) => {
+        const name = c.contact_id ? (c.business || c.name || (c.instagram ? '@' + c.instagram : '') || fmtPhone(c.phone)) : fmtPhone(c.phone) || 'Unknown number';
+        const len = c.duration ? `${Math.floor(c.duration / 60)}:${String(c.duration % 60).padStart(2, '0')}` : '-';
+        const who = c.contact_id ? `<a href="#c/${c.contact_id}">${esc(name)}</a>` : esc(name);
+        return `<tr>
+          <td>${c.direction === 'in' ? '↙ ' : '↗ '}${who}${c.contact_id && c.phone && name !== fmtPhone(c.phone) ? `<div class="muted small">${esc(fmtPhone(c.phone))}</div>` : ''}</td>
+          <td class="muted">${esc(when(c.created_at))}</td>
+          <td class="hide-s muted">${len}</td>
+          <td>${c.outcome ? `<span class="oc-tag oc-${esc(c.outcome)}">${esc(state.me.outcomes[c.outcome] || c.outcome)}</span>` : `<span class="muted">${esc(c.status || '')}</span>`}</td>
+          <td class="hide-s note muted" title="${esc(c.note || '')}">${esc(c.note || '')}</td>
+          <td class="num"><button class="btn small" data-logcall="${c.id}">${c.outcome ? 'Edit' : 'Log'}</button></td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" class="empty-row">No calls yet. Calls you make show up here.</td></tr>';
+    } catch (err) { console.error(err); }
+  }
+  $('callLogRows').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-logcall]'); if (!b) return;
+    const c = (state.callLog || []).find((x) => String(x.id) === b.dataset.logcall); if (!c) return;
+    openLogCall({ id: c.id, who: c.contact_id ? (c.business || c.name || fmtPhone(c.phone)) : fmtPhone(c.phone), known: Boolean(c.contact_id) });
+    if (c.outcome) { pickOutcome(c.outcome); $('lcNote').value = c.note || ''; }
+  });
+
   function attachCall(call, who, initial, fromDialer = false) {
     state.call = call;
     const inDialer = fromDialer && state.page === 'dialer';
@@ -855,6 +921,11 @@
       clearInterval(state.timer); state.call = null; $('callBar').hidden = true;
       if (t0) { state.session.talk += Math.floor((Date.now() - t0) / 1000); renderSession(); }
       if (inDialer) { setDialing(false, t0 ? 'Call ended. Log the outcome.' : 'No answer? Log the outcome.'); $('dMute').textContent = 'Mute'; }
+      else {
+        const sid = call.parameters && call.parameters.CallSid;
+        const known = [...state.pipeline, ...state.contacts].some((x) => x.phone && who === displayName(x));
+        if (sid) setTimeout(() => openLogCall({ sid, who, answered: Boolean(t0), known }), 600);
+      }
       setTimeout(() => { if (state.page === 'record' && state.current) loadTimeline(true); }, 1500);
     };
     call.on('disconnect', end); call.on('cancel', end); call.on('reject', end);

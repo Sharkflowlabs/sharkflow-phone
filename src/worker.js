@@ -342,22 +342,51 @@ async function handleApi(request, env, url) {
     const c = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
     if (!c) throw new HttpError(404, 'Not found');
     const note = String(body.note || '').trim().slice(0, 4000);
-    const ts = nowIso();
-    await db.prepare("INSERT INTO activities (contact_id, kind, outcome, body, created_at) VALUES (?, 'dial', ?, ?, ?)").bind(id, outcome, note, ts).run();
-    if (outcome === 'no_answer' || outcome === 'voicemail') {
-      const r = await logTouchFor(db, c, today, '');
-      return json({ contact: r });
-    }
-    if (outcome === 'connected' && EARLY.includes(c.stage)) await changeStage(db, id, 'Connected', today);
-    if (outcome === 'interested' && c.stage !== 'Interested' && !['In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
-    const sets = ['last_activity_at = ?', 'updated_at = ?'];
-    const args = [ts, ts];
-    if (outcome === 'connected' || outcome === 'interested') { sets.push('next_follow_up = ?', "lost_reason = ''"); args.push(addDays(today, outcome === 'interested' ? 1 : 2)); }
-    if (outcome === 'not_interested') { sets.push("stage = 'Lost'", "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?'); args.push(today); }
-    if (outcome === 'callback') { sets.push('next_follow_up = ?'); args.push(isDate(body.callback) ? body.callback : addDays(today, 1)); }
-    if (outcome === 'bad_number') { sets.push("notes = CASE WHEN notes = '' THEN ? ELSE notes || char(10) || ? END"); args.push(`${today}: wrong number ${c.phone || ''}`, `${today}: wrong number ${c.phone || ''}`); }
-    const contact = await db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, id).first();
+    const contact = await applyDisposition(db, c, outcome, note, today, body.callback);
+    // Mark this contact's latest unlogged call (last 3 hours) with the same outcome, so it shows in Logged calls.
+    await db.prepare(`UPDATE calls SET outcome = ?, note = ? WHERE id = (SELECT id FROM calls WHERE contact_id = ? AND outcome IS NULL
+      AND created_at >= ? ORDER BY id DESC LIMIT 1)`).bind(outcome, note, id, new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 19) + 'Z').run();
     return json({ contact });
+  }
+
+  if (path === '/api/calls' && method === 'GET') {
+    // Logged calls: most recent calls in and out, with who they were with and how they were logged.
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+    const { results } = await db.prepare(`
+      SELECT k.id, k.contact_id, k.direction, k.twilio_sid, k.status, k.duration, k.outcome, k.note, k.created_at,
+        k.recording_sid, COALESCE(c.phone, k.to_number) AS phone, c.business, c.name, c.instagram, c.stage
+      FROM calls k LEFT JOIN contacts c ON c.id = k.contact_id
+      WHERE k.status IS NULL OR k.status != 'voicemail'
+      ORDER BY k.id DESC LIMIT ?`).bind(limit).all();
+    return json({ calls: results, outcomes: OUTCOMES });
+  }
+
+  if (path === '/api/calls/log' && method === 'POST') {
+    // Log a finished call: pick an outcome, add a note, optionally save an unknown number as a contact.
+    const body = await readJson(request);
+    const today = todayFrom(body.today);
+    const outcome = body.outcome;
+    if (!OUTCOMES[outcome]) throw new HttpError(400, 'Pick an outcome');
+    const call = body.id
+      ? await db.prepare('SELECT * FROM calls WHERE id = ?').bind(Number(body.id)).first()
+      : await db.prepare('SELECT * FROM calls WHERE twilio_sid = ?').bind(String(body.sid || '')).first();
+    if (!call) throw new HttpError(404, 'Call not found. Try again in a few seconds.');
+    const note = String(body.note || '').trim().slice(0, 4000);
+    let contactId = call.contact_id;
+    if (!contactId && body.save) {
+      const phone = call.to_number;
+      const existing = phone ? await db.prepare('SELECT id FROM contacts WHERE phone = ?').bind(phone).first() : null;
+      contactId = existing ? existing.id
+        : (await createContact(db, { phone, business: body.business, name: body.name, source: body.source, stage: FIRST })).id;
+    }
+    let contact = null;
+    if (contactId) {
+      const c = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(contactId).first();
+      if (c) contact = await applyDisposition(db, c, outcome, note, today, body.callback);
+    }
+    await db.prepare('UPDATE calls SET outcome = ?, note = ?, contact_id = COALESCE(contact_id, ?) WHERE id = ?')
+      .bind(outcome, note, contactId || null, call.id).run();
+    return json({ ok: true, contact });
   }
 
   if ((m = path.match(/^\/api\/contacts\/(\d+)\/touch$/)) && method === 'POST') {
@@ -1028,6 +1057,10 @@ async function handleTwilio(request, env, url) {
       const contact = p.OneOff === '1'
         ? await db.prepare('SELECT * FROM contacts WHERE phone = ?').bind(to).first()
         : await findOrCreateContact(db, to);
+      if (!contact) {
+        await db.prepare("INSERT OR IGNORE INTO calls (contact_id, direction, twilio_sid, status, to_number, created_at) VALUES (NULL, 'out', ?, 'calling', ?, ?)")
+          .bind(p.CallSid, to, ts).run();
+      }
       if (contact) await db.batch([
         db.prepare("INSERT OR IGNORE INTO calls (contact_id, direction, twilio_sid, status, created_at) VALUES (?, 'out', ?, 'calling', ?)")
           .bind(contact.id, p.CallSid, ts),
@@ -1062,6 +1095,23 @@ async function handleTwilio(request, env, url) {
     default:
       return new Response('Not found', { status: 404 });
   }
+}
+
+// Apply a call outcome to a contact: timeline entry, stage move, follow-up date.
+async function applyDisposition(db, c, outcome, note, today, callback) {
+  const id = c.id;
+  const ts = nowIso();
+  await db.prepare("INSERT INTO activities (contact_id, kind, outcome, body, created_at) VALUES (?, 'dial', ?, ?, ?)").bind(id, outcome, note, ts).run();
+  if (outcome === 'no_answer' || outcome === 'voicemail') return logTouchFor(db, c, today, '');
+  if (outcome === 'connected' && EARLY.includes(c.stage)) await changeStage(db, id, 'Connected', today);
+  if (outcome === 'interested' && c.stage !== 'Interested' && !['In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
+  const sets = ['last_activity_at = ?', 'updated_at = ?'];
+  const args = [ts, ts];
+  if (outcome === 'connected' || outcome === 'interested') { sets.push('next_follow_up = ?', "lost_reason = ''"); args.push(addDays(today, outcome === 'interested' ? 1 : 2)); }
+  if (outcome === 'not_interested') { sets.push("stage = 'Lost'", "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?'); args.push(today); }
+  if (outcome === 'callback') { sets.push('next_follow_up = ?'); args.push(isDate(callback) ? callback : addDays(today, 1)); }
+  if (outcome === 'bad_number') { sets.push("notes = CASE WHEN notes = '' THEN ? ELSE notes || char(10) || ? END"); args.push(`${today}: wrong number ${c.phone || ''}`, `${today}: wrong number ${c.phone || ''}`); }
+  return db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, id).first();
 }
 
 async function findOrCreateContact(db, phone) {

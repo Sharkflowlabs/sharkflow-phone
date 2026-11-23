@@ -153,6 +153,16 @@
             <p class="muted small">Edit freely. It's saved in this browser.</p>
           </aside>
         </div>
+
+        <section class="card calllog">
+          <div class="card-head"><h2>Logged calls</h2><span class="muted small" id="callLogSub"></span></div>
+          <div class="table-wrap">
+            <table class="ctable">
+              <thead><tr><th>Who</th><th>When</th><th class="hide-s">Length</th><th>Outcome</th><th class="hide-s">Note</th><th></th></tr></thead>
+              <tbody id="callLogRows"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
       <!-- PIPELINE -->
@@ -326,6 +336,25 @@
       <button class="btn danger" id="rejectBtn">Decline</button>
     </div>
   </div>
+
+  <dialog id="logCallDialog">
+    <form method="dialog" id="logCallForm" class="dialog-form">
+      <h2>Log this call</h2>
+      <p class="muted" id="lcWho"></p>
+      <div class="outcomes" id="lcOutcomes"></div>
+      <label class="check cb" id="lcCbWrap" hidden>Call back on<input id="lcCallback" type="date"></label>
+      <label>Note<textarea id="lcNote" rows="3" placeholder="What did they say?"></textarea></label>
+      <div id="lcSaveWrap" hidden>
+        <label class="check"><input type="checkbox" id="lcSave"> Save this number as a contact</label>
+        <div class="optin-grid" id="lcSaveFields" hidden>
+          <label>Business<input id="lcBusiness"></label>
+          <label>Contact name<input id="lcName"></label>
+        </div>
+      </div>
+      <p class="error" id="lcError"></p>
+      <div class="row end"><button class="btn" value="cancel" formnovalidate>Skip</button><button class="btn primary" value="ok" id="lcSubmit">Save</button></div>
+    </form>
+  </dialog>
 
   <dialog id="newDialog">
     <form method="dialog" id="newForm" class="dialog-form">
