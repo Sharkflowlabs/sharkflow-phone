@@ -100,6 +100,7 @@
     $('fLost').insertAdjacentHTML('beforeend', state.me.lostReasons.map((s) => `<option>${esc(s)}</option>`).join(''));
     $('oiChannel').innerHTML = '<option value="">Pick one</option>' + state.me.optInChannels.map((s) => `<option>${esc(s)}</option>`).join('');
     $('optOutText').textContent = state.me.optOutLine;
+    $('clOutcome').insertAdjacentHTML('beforeend', Object.entries(state.me.outcomes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join(''));
     $('lcOutcomes').innerHTML = Object.entries(state.me.outcomes).map(([k, v]) =>
       `<button type="button" class="outcome oc-${k}" data-oc="${k}">${esc(v)}</button>`).join('');
     $('outcomes').innerHTML = Object.entries(state.me.outcomes).map(([k, v], i) =>
@@ -873,10 +874,12 @@
   });
   async function loadCallLog() {
     try {
-      const { calls } = await api('/api/calls?limit=50');
+      const { calls } = await api('/api/calls?' + callLogParams());
       state.callLog = calls;
       const open = calls.filter((c) => !c.outcome && c.direction === 'out').length;
-      $('callLogSub').textContent = calls.length ? `${calls.length} recent${open ? ` · ${open} not logged yet` : ''}` : '';
+      const talk = calls.reduce((n, c) => n + (c.duration || 0), 0);
+      const conn = calls.filter((c) => ['connected', 'interested', 'not_interested', 'callback'].includes(c.outcome)).length;
+      $('callLogSub').textContent = calls.length ? `${calls.length} call${calls.length === 1 ? '' : 's'} · ${conn} connected · ${Math.round(talk / 60)}m talk${open ? ` · ${open} not logged yet` : ''}` : '';
       $('callLogRows').innerHTML = calls.map((c) => {
         const name = c.contact_id ? (c.business || c.name || (c.instagram ? '@' + c.instagram : '') || fmtPhone(c.phone)) : fmtPhone(c.phone) || 'Unknown number';
         const len = c.duration ? `${Math.floor(c.duration / 60)}:${String(c.duration % 60).padStart(2, '0')}` : '-';
@@ -887,11 +890,43 @@
           <td class="hide-s muted">${len}</td>
           <td>${c.outcome ? `<span class="oc-tag oc-${esc(c.outcome)}">${esc(state.me.outcomes[c.outcome] || c.outcome)}</span>` : `<span class="muted">${esc(c.status || '')}</span>`}</td>
           <td class="hide-s note muted" title="${esc(c.note || '')}">${esc(c.note || '')}</td>
+          <td>${c.has_recording ? `<audio controls preload="none" src="/api/calls/${c.id}/recording"></audio><a class="link rec-dl hide-s" href="/api/calls/${c.id}/recording" download="call-${c.id}.mp3">Download</a>` : '<span class="muted">-</span>'}</td>
           <td class="num"><button class="btn small" data-logcall="${c.id}">${c.outcome ? 'Edit' : 'Log'}</button></td>
         </tr>`;
-      }).join('') || '<tr><td colspan="6" class="empty-row">No calls yet. Calls you make show up here.</td></tr>';
+      }).join('') || `<tr><td colspan="7" class="empty-row">${callLogFiltered() ? 'No calls match these filters.' : 'No calls yet. Calls you make show up here.'}</td></tr>`;
     } catch (err) { console.error(err); }
   }
+  // Filters: dates are in your own time zone, sent to the server as UTC bounds.
+  const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const ymdLocal = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  function callLogRange() {
+    const v = $('clDate').value, now = new Date(), t0 = dayStart(now), day = 864e5;
+    if (v === 'today') return [t0, null];
+    if (v === 'yesterday') return [new Date(t0 - day), t0];
+    if (v === '7' || v === '30') return [new Date(t0 - (Number(v) - 1) * day), null];
+    if (v === 'month') return [new Date(now.getFullYear(), now.getMonth(), 1), null];
+    if (v === 'custom') {
+      const f = $('clFrom').value, to = $('clTo').value;
+      return [f ? ymdLocal(f) : null, to ? new Date(ymdLocal(to).getTime() + day) : null];
+    }
+    return [null, null];
+  }
+  const callLogFiltered = () => $('clDate').value !== 'all' || $('clOutcome').value || $('clDir').value || $('clRec').checked || $('clSearch').value.trim();
+  function callLogParams() {
+    const p = new URLSearchParams({ limit: '200' });
+    const [a, b] = callLogRange();
+    const iso = (d) => d.toISOString().slice(0, 19) + 'Z';
+    if (a) p.set('after', iso(a)); if (b) p.set('before', iso(b));
+    if ($('clOutcome').value) p.set('outcome', $('clOutcome').value);
+    if ($('clDir').value) p.set('dir', $('clDir').value);
+    if ($('clRec').checked) p.set('recorded', '1');
+    if ($('clSearch').value.trim()) p.set('q', $('clSearch').value.trim());
+    return p;
+  }
+  $('clDate').addEventListener('change', () => { $('clCustom').hidden = $('clDate').value !== 'custom'; loadCallLog(); });
+  ['clFrom', 'clTo', 'clOutcome', 'clDir', 'clRec'].forEach((id) => $(id).addEventListener('change', loadCallLog));
+  let clTimer; $('clSearch').addEventListener('input', () => { clearTimeout(clTimer); clTimer = setTimeout(loadCallLog, 300); });
+
   $('callLogRows').addEventListener('click', (e) => {
     const b = e.target.closest('[data-logcall]'); if (!b) return;
     const c = (state.callLog || []).find((x) => String(x.id) === b.dataset.logcall); if (!c) return;

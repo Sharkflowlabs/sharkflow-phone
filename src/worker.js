@@ -351,13 +351,28 @@ async function handleApi(request, env, url) {
 
   if (path === '/api/calls' && method === 'GET') {
     // Logged calls: most recent calls in and out, with who they were with and how they were logged.
-    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+    const qp = (k) => url.searchParams.get(k) || '';
+    const limit = Math.min(Number(qp('limit')) || 100, 500);
+    const where = ["(k.status IS NULL OR k.status != 'voicemail')"], args = [];
+    const isoRe = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+    if (isoRe.test(qp('after'))) { where.push('k.created_at >= ?'); args.push(qp('after')); }
+    if (isoRe.test(qp('before'))) { where.push('k.created_at < ?'); args.push(qp('before')); }
+    if (qp('outcome') === 'none') where.push('k.outcome IS NULL');
+    else if (OUTCOMES[qp('outcome')]) { where.push('k.outcome = ?'); args.push(qp('outcome')); }
+    if (qp('dir') === 'in' || qp('dir') === 'out') { where.push('k.direction = ?'); args.push(qp('dir')); }
+    if (qp('recorded') === '1') where.push('k.recording_sid IS NOT NULL');
+    if (qp('q')) {
+      const like = `%${qp('q').slice(0, 100)}%`;
+      where.push('(c.business LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR k.to_number LIKE ? OR k.note LIKE ?)');
+      args.push(like, like, like, like, like);
+    }
     const { results } = await db.prepare(`
       SELECT k.id, k.contact_id, k.direction, k.twilio_sid, k.status, k.duration, k.outcome, k.note, k.created_at,
-        k.recording_sid, COALESCE(c.phone, k.to_number) AS phone, c.business, c.name, c.instagram, c.stage
+        k.recording_sid IS NOT NULL AS has_recording, k.recording_duration,
+        COALESCE(c.phone, k.to_number) AS phone, c.business, c.name, c.instagram, c.stage
       FROM calls k LEFT JOIN contacts c ON c.id = k.contact_id
-      WHERE k.status IS NULL OR k.status != 'voicemail'
-      ORDER BY k.id DESC LIMIT ?`).bind(limit).all();
+      WHERE ${where.join(' AND ')}
+      ORDER BY k.id DESC LIMIT ?`).bind(...args, limit).all();
     return json({ calls: results, outcomes: OUTCOMES });
   }
 

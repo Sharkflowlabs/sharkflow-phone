@@ -156,9 +156,20 @@
 
         <section class="card calllog">
           <div class="card-head"><h2>Logged calls</h2><span class="muted small" id="callLogSub"></span></div>
+          <div class="cl-filters">
+            <select id="clDate" aria-label="Date">
+              <option value="all">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option>
+              <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">This month</option><option value="custom">Pick dates…</option>
+            </select>
+            <span id="clCustom" class="cl-custom" hidden><input id="clFrom" type="date" aria-label="From"><span class="muted">to</span><input id="clTo" type="date" aria-label="To"></span>
+            <select id="clOutcome" aria-label="Outcome"><option value="">All outcomes</option><option value="none">Not logged yet</option></select>
+            <select id="clDir" aria-label="Direction"><option value="">In and out</option><option value="out">Outgoing</option><option value="in">Incoming</option></select>
+            <label class="check"><input type="checkbox" id="clRec"> Has recording</label>
+            <input id="clSearch" type="search" placeholder="Search name, number, note">
+          </div>
           <div class="table-wrap">
             <table class="ctable">
-              <thead><tr><th>Who</th><th>When</th><th class="hide-s">Length</th><th>Outcome</th><th class="hide-s">Note</th><th></th></tr></thead>
+              <thead><tr><th>Who</th><th>When</th><th class="hide-s">Length</th><th>Outcome</th><th class="hide-s">Note</th><th>Recording</th><th></th></tr></thead>
               <tbody id="callLogRows"></tbody>
             </table>
           </div>
