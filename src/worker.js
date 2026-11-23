@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const STAGES = [
   'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'LTO', 'Lost',
 ];
-const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'Other'];
+const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'ZoomInfo', 'Other'];
 const FIRST = 'Prospects';
 const ATC = 'Attempt to connect';
 // Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
