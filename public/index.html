@@ -83,6 +83,7 @@
         </header>
         <div id="dialerNotice" class="notice" hidden></div>
         <div class="dial-grid">
+          <div class="dial-left">
           <aside class="card queue">
             <div class="card-head"><h2>Queue</h2><span class="muted" id="queueCount"></span></div>
             <select id="queueFilter" aria-label="Which list to call">
@@ -97,11 +98,20 @@
             <ol id="queueList" class="queue-list"></ol>
           </aside>
 
+          <aside class="card quickdial">
+            <div class="card-head"><h2>Quick call</h2><span class="muted small">Not saved as a contact</span></div>
+            <form id="quickDialForm" class="dialpad-inline">
+              <input id="quickDial" type="tel" inputmode="tel" autocomplete="off" placeholder="(555) 123-4567 or +91…" aria-label="Number to call">
+              <button class="btn call" id="quickDialBtn">Call</button>
+            </form>
+            <div class="qd-keys" id="qdKeys"><button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button><button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button><button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button><button type="button" data-k="*">*</button><button type="button" data-k="0">0</button><button type="button" data-k="#">#</button><button type="button" data-k="+">+</button><button type="button" data-k="del" aria-label="Delete">⌫</button></div>
+          </aside>
+          </div>
+
           <section class="card dial-main" id="dialMain">
             <div id="dialEmpty" class="dial-empty">
               <p><b>No one to call in this list.</b></p>
-              <p class="muted">Only contacts with a phone number show up here. Add numbers on a contact's record, or import a CSV.</p>
-              <div class="dialpad-inline"><input id="quickDial" type="tel" placeholder="Dial any number"><button class="btn call" id="quickDialBtn">Call</button></div>
+              <p class="muted">Only contacts with a phone number show up here. Add numbers on a contact's record, import a CSV, or use Quick call.</p>
             </div>
             <div id="dialCard" hidden>
               <div class="dial-who">

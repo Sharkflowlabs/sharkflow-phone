@@ -168,7 +168,15 @@ h1, h2 { margin: 0; letter-spacing: -.01em; }
 .dial-main { display: grid; gap: 14px; padding: 20px; }
 .dial-empty { text-align: center; padding: 40px 12px; display: grid; gap: 4px; justify-items: center; }
 .dial-empty p { margin: 0; }
-.dialpad-inline { display: flex; gap: 8px; margin-top: 14px; width: min(360px, 100%); }
+.dialpad-inline { display: flex; gap: 8px; width: 100%; }
+.dialpad-inline input { flex: 1; min-width: 0; font-size: 16px; }
+.dial-left { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.quickdial { display: grid; gap: 10px; align-self: start; }
+.quickdial .card-head { margin: 0; }
+.qd-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.qd-keys button { padding: 10px 0; border-radius: 10px; border: 1px solid var(--line, #26262c); background: var(--panel-2, #1b1b20); color: inherit; font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; }
+.qd-keys button:hover { border-color: var(--accent); }
+.qd-keys button[data-k="+"], .qd-keys button[data-k="del"] { font-size: 15px; }
 #dialCard { display: grid; gap: 14px; }
 .dial-who { display: flex; gap: 14px; align-items: center; }
 .dial-who h2 { font-size: 22px; font-weight: 700; }
@@ -403,3 +411,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .7); }
   .ai-fab { bottom: 76px; right: 12px; padding: 10px 14px; }
   .ai-panel { right: 8px; left: 8px; bottom: 8px; width: auto; height: calc(100dvh - 16px); }
 }
+
+/* Phones already show a number keyboard, so hide the on-screen pad there. */
+@media (max-width: 760px) { .qd-keys { display: none; } }

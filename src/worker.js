@@ -1024,8 +1024,11 @@ async function handleTwilio(request, env, url) {
       if (p.Caller !== `client:${CLIENT_IDENTITY}`) return twiml('<Reject/>');
       const to = normalizePhone(p.To);
       if (!to) return twiml('<Say>That number is not valid.</Say><Hangup/>');
-      const contact = await findOrCreateContact(db, to);
-      await db.batch([
+      // Quick call from the dial pad: log it on an existing contact if the number is known, otherwise don't save anything.
+      const contact = p.OneOff === '1'
+        ? await db.prepare('SELECT * FROM contacts WHERE phone = ?').bind(to).first()
+        : await findOrCreateContact(db, to);
+      if (contact) await db.batch([
         db.prepare("INSERT OR IGNORE INTO calls (contact_id, direction, twilio_sid, status, created_at) VALUES (?, 'out', ?, 'calling', ?)")
           .bind(contact.id, p.CallSid, ts),
         db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(ts, contact.id),

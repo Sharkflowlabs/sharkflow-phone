@@ -786,11 +786,11 @@
     const c = [...state.pipeline, ...state.contacts].find((x) => x.phone === phone);
     return c ? displayName(c) : fmtPhone(phone);
   }
-  async function placeCall(to, label, fromDialer = false) {
+  async function placeCall(to, label, fromDialer = false, oneOff = false) {
     if (!state.device) return toast('Calling is not ready yet.');
     if (state.call) return toast('You are already on a call.');
     try {
-      const call = await state.device.connect({ params: { To: to } });
+      const call = await state.device.connect({ params: oneOff ? { To: to, OneOff: '1' } : { To: to } });
       attachCall(call, label || nameFor(to), 'Calling…', fromDialer);
     } catch (err) { toast(err.message); }
   }
@@ -799,7 +799,20 @@
     if ($('callBtn').classList.contains('disabled')) return toast($('callBtn').title);
     placeCall(c.phone, displayName(c));
   });
-  $('quickDialBtn').addEventListener('click', () => { const v = $('quickDial').value.trim(); if (v) placeCall(v); });
+  $('quickDialForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = $('quickDial').value.trim();
+    if (!v) return toast('Type a number first.');
+    if (state.call) { if (/^[0-9*#]$/.test(v.slice(-1))) state.call.sendDigits(v.slice(-1)); return; }
+    placeCall(v, null, false, true);
+  });
+  $('qdKeys').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]'); if (!b) return;
+    const k = b.dataset.k, input = $('quickDial');
+    if (k === 'del') input.value = input.value.slice(0, -1);
+    else { input.value += k; if (state.call && k !== '+') state.call.sendDigits(k); }
+    input.focus();
+  });
 
   function attachCall(call, who, initial, fromDialer = false) {
     state.call = call;
