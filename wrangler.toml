@@ -2,6 +2,8 @@ name = "sharkflow-phone"
 main = "src/worker.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
+# Keep variables added in the Cloudflare dashboard when GitHub deploys (otherwise plain-text vars get wiped).
+keep_vars = true
 # Easy-to-remember address. The workers.dev URL keeps working too (Twilio webhooks point there).
 routes = [{ pattern = "crm.sharkflowlabs.com", custom_domain = true }]
 

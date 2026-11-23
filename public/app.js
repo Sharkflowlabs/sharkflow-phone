@@ -768,17 +768,27 @@
   }
   async function fetchToken() { return (await api('/api/voice-token')).token; }
   async function setupVoice() {
-    if (!window.Twilio || !window.Twilio.Device) { setPhoneStatus('off', 'Calling failed to load'); return; }
+    if (!window.Twilio || !window.Twilio.Device) { state.voiceError = 'The calling library did not load. Refresh the page.'; setPhoneStatus('off', state.voiceError); return; }
+    state.voiceError = '';
     try {
       const device = new Twilio.Device(await fetchToken(), { codecPreferences: ['opus', 'pcmu'], closeProtection: true });
       state.device = device;
       device.on('registered', () => setPhoneStatus('on', 'Ready for calls'));
       device.on('unregistered', () => setPhoneStatus('off', 'Calling off (click to retry)'));
-      device.on('error', (err) => { console.error(err); toast(`Calling error: ${err.message}`); });
+      device.on('error', (err) => {
+        console.error(err);
+        state.voiceError = `${err.message}${err.code ? ` (code ${err.code})` : ''}`;
+        if (device.state !== 'registered') setPhoneStatus('off', state.voiceError);
+        toast(`Calling error: ${state.voiceError}`);
+      });
       device.on('tokenWillExpire', async () => device.updateToken(await fetchToken()));
       device.on('incoming', onIncoming);
       await device.register();
-    } catch (err) { setPhoneStatus('off', 'Calling off (click to retry)'); console.error(err); }
+    } catch (err) {
+      console.error(err);
+      state.voiceError = err.message || String(err);
+      setPhoneStatus('off', `Calling off: ${state.voiceError} (click to retry)`);
+    }
   }
   $('phoneStatus').addEventListener('click', () => { if (state.me.callingReady && !(state.device && state.device.state === 'registered')) setupVoice(); });
 
@@ -787,7 +797,12 @@
     return c ? displayName(c) : fmtPhone(phone);
   }
   async function placeCall(to, label, fromDialer = false, oneOff = false) {
-    if (!state.device) return toast('Calling is not ready yet.');
+    if (!state.device && state.me.callingReady) await setupVoice();
+    if (!state.device) {
+      return toast(state.me.callingReady
+        ? `Calling couldn't start: ${state.voiceError || 'unknown error'}`
+        : 'Calling is off: the Worker is missing a Twilio setting (API key, TwiML App or number).');
+    }
     if (state.call) return toast('You are already on a call.');
     try {
       const call = await state.device.connect({ params: oneOff ? { To: to, OneOff: '1' } : { To: to } });
