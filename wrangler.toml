@@ -22,6 +22,9 @@ database_id = "a8b73e65-b207-4f14-8877-426f7fca70be"
 binding = "AI"
 
 [vars]
+# Not secret: your Twilio number (caller ID) and the TwiML App the dialer uses. Kept here so deploys never drop them.
+TWILIO_NUMBER = "+14707061294"
+TWILIO_TWIML_APP_SID = "AP5446ad391bc762c77db1811b7ed526ee"
 # Optional. Your own cell in E.164 (e.g. +919876543210). Incoming calls ring the browser and this number together.
 FORWARD_TO = ""
 # Record every answered call (both sides). The other person hears RECORDING_NOTICE first.

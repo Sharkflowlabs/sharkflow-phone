@@ -797,6 +797,10 @@
     return c ? displayName(c) : fmtPhone(phone);
   }
   async function placeCall(to, label, fromDialer = false, oneOff = false) {
+    if (!state.device && !state.me.callingReady) {
+      // Settings may have changed since this page loaded; check again before giving up.
+      try { state.me = await api('/api/me'); } catch { /* keep the old copy */ }
+    }
     if (!state.device && state.me.callingReady) await setupVoice();
     if (!state.device) {
       return toast(state.me.callingReady
