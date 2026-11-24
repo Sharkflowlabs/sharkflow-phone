@@ -14,20 +14,14 @@ const EARLY = [FIRST, ATC, 'LTO', 'Lost'];
 const PIPELINE = ['Interested', 'In build'];
 const WON = 'Closed won + site live';
 // Tasks created automatically when a deal moves into a stage: [title, days from today].
-const STAGE_TASKS = {
-  'Connected': [['Send the demo link', 1]],
-  'Interested': [['Send mockup and pricing', 1], ['Chase the payment', 4]],
-  'In build': [['Collect logo, photos and content', 1], ['Deliver the site', 7]],
-  'Closed won + site live': [['Ask for a review and a referral', 3]],
-};
+// Empty on purpose: Sai adds his own tasks/reminders (pipeline card "+ Task"); nothing is scheduled automatically.
+const STAGE_TASKS = {};
 // A deal is "stale" when it sits in one of these stages longer than this many days with no activity.
 const STALE_DAYS = { 'Connected': 3, 'Interested': 5, 'In build': 7 };
 const OUTCOMES = {
   no_answer: 'No answer', voicemail: 'Left voicemail', connected: 'Connected', interested: 'Interested',
   not_interested: 'Not interested', callback: 'Call back later', bad_number: 'Wrong number',
 };
-// Days to wait after outreach touch 1, 2 and 3. After touch 4 with no reply the deal goes to Lost (No response) with a 90 day retry.
-const TOUCH_GAPS = [2, 3, 5];
 const MAX_TOUCHES = 4;
 const LOST_REASONS = ['No response', 'Not interested', 'Too expensive', 'Went with someone else', 'Other'];
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT', 'REVOKE'];
@@ -224,7 +218,6 @@ async function handleApi(request, env, url) {
     const r = await db.prepare(`
       SELECT
         (SELECT COUNT(*) FROM contacts WHERE stage IN ('Connected','Interested','In build')) AS active,
-        (SELECT COUNT(*) FROM contacts WHERE next_follow_up IS NOT NULL AND next_follow_up <= ? AND stage NOT IN ('Lost')) AS due,
         (SELECT COUNT(*) FROM tasks WHERE done = 0 AND due IS NOT NULL AND due <= ?) AS tasks_due,
         (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Interested','In build')) AS open_value,
         (SELECT COUNT(*) FROM contacts WHERE stage IN ('Interested','In build')) AS open_count,
@@ -232,16 +225,20 @@ async function handleApi(request, env, url) {
         (SELECT COUNT(*) FROM contacts WHERE stage = 'Closed won + site live' AND substr(stage_since,1,7) = ?) AS won_count,
         (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND substr(created_at,1,10) = ?) AS dials_today,
         (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND outcome IN ('connected','interested','not_interested','callback') AND substr(created_at,1,10) = ?) AS connects_today
-    `).bind(today, today, month, month, today, today).first();
+    `).bind(today, month, month, today, today).first();
     const { results } = await db.prepare('SELECT stage, COUNT(*) AS n, COALESCE(SUM(value),0) AS total FROM contacts GROUP BY stage').all();
     return json({ ...r, stages: results });
   }
 
   if (path === '/api/pipeline' && method === 'GET') {
     const { results } = await db.prepare(`
-      SELECT id, name, business, phone, email, website, instagram, source, stage, value, hot, touches, last_touch, next_step, next_follow_up,
-        stage_since, deadline, lost_reason, unread, last_activity_at, created_at
-      FROM contacts ORDER BY hot DESC, COALESCE(next_follow_up, '9999') ASC, updated_at DESC LIMIT 2000`).all();
+      SELECT c.id, c.name, c.business, c.phone, c.email, c.website, c.instagram, c.source, c.stage, c.value, c.hot, c.touches, c.last_touch, c.next_step,
+        c.stage_since, c.deadline, c.lost_reason, c.unread, c.last_activity_at, c.created_at,
+        t.id AS task_id, t.title AS task_title, t.due AS task_due,
+        (SELECT COUNT(*) FROM tasks WHERE contact_id = c.id AND done = 0) AS open_tasks
+      FROM contacts c
+      LEFT JOIN tasks t ON t.id = (SELECT id FROM tasks WHERE contact_id = c.id AND done = 0 ORDER BY COALESCE(due, '9999'), id LIMIT 1)
+      ORDER BY c.hot DESC, COALESCE(t.due, '9999') ASC, c.updated_at DESC LIMIT 2000`).all();
     return json({ contacts: results });
   }
 
@@ -425,8 +422,8 @@ async function handleApi(request, env, url) {
     if (!c) throw new HttpError(404, 'Not found');
     const early = EARLY.includes(c.stage);
     if (early) await changeStage(db, id, 'Connected', today);
-    const contact = await db.prepare(`UPDATE contacts SET touches = 0, lost_reason = '', next_follow_up = ?, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
-      .bind(addDays(today, 1), nowIso(), nowIso(), id).first();
+    const contact = await db.prepare(`UPDATE contacts SET touches = 0, lost_reason = '', next_follow_up = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
+      .bind(nowIso(), nowIso(), id).first();
     return json({ contact });
   }
 
@@ -446,21 +443,23 @@ async function handleApi(request, env, url) {
       const like = `%${q}%`;
       args.push(like, like, like, like, like, like);
     }
-    if (view === 'due') { where.push('c.next_follow_up IS NOT NULL AND c.next_follow_up <= ?'); args.push(today); }
+    if (view === 'due') { where.push('EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id = c.id AND t.done = 0 AND t.due IS NOT NULL AND t.due <= ?)'); args.push(today); }
     if (view === 'unread') where.push('c.unread > 0');
     if (view === 'hot') where.push('c.hot = 1');
     const sql = `
       SELECT c.*,
         (SELECT body FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS last_body,
-        (SELECT direction FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS last_direction
+        (SELECT direction FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS last_direction,
+        (SELECT title FROM tasks WHERE contact_id = c.id AND done = 0 ORDER BY COALESCE(due, '9999'), id LIMIT 1) AS task_title,
+        (SELECT due FROM tasks WHERE contact_id = c.id AND done = 0 ORDER BY COALESCE(due, '9999'), id LIMIT 1) AS task_due
       FROM contacts c
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY ${view === 'due' ? 'c.next_follow_up ASC,' : ''} COALESCE(c.last_activity_at, c.created_at) DESC
+      ORDER BY ${view === 'due' ? 'task_due ASC,' : ''} COALESCE(c.last_activity_at, c.created_at) DESC
       LIMIT 500`;
     const { results } = await db.prepare(sql).bind(...args).all();
     const counts = await db.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM contacts WHERE next_follow_up IS NOT NULL AND next_follow_up <= ?) AS due,
+        (SELECT COUNT(DISTINCT contact_id) FROM tasks WHERE done = 0 AND contact_id IS NOT NULL AND due IS NOT NULL AND due <= ?) AS due,
         (SELECT COUNT(*) FROM contacts WHERE unread > 0) AS unread`).bind(today).first();
     return json({ contacts: results, counts });
   }
@@ -698,7 +697,7 @@ async function createContact(db, body) {
     throw new HttpError(400, 'Add at least a phone, Instagram, email or name');
   }
   const stage = STAGES.includes(body.stage) ? body.stage : FIRST;
-  const followUp = isDate(body.next_follow_up) ? body.next_follow_up : null;
+  const followUp = null; // follow-up dates are retired; use tasks
   const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
     return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since, source)
@@ -719,10 +718,9 @@ async function logTouchFor(db, c, today, note) {
     // The no-reply cadence only applies before they've answered; later stages just log the touch.
     const cadence = EARLY.includes(c.stage);
     if (cadence && (c.stage === 'Lost' || c.stage === 'LTO')) stage = c.stage === 'LTO' ? 'LTO' : ATC;
-    if (!cadence) follow = addDays(today, 2);
-    else if (touches >= MAX_TOUCHES) {
-      stage = 'Lost'; reason = 'No response'; follow = addDays(today, 90);
-    } else follow = addDays(today, TOUCH_GAPS[touches - 1]);
+    // No automatic follow-up dates any more (Sai adds a task when he wants a reminder).
+    follow = null;
+    if (cadence && touches >= MAX_TOUCHES) { stage = 'Lost'; reason = 'No response'; }
     if (cadence && stage !== 'Lost') reason = '';
     const text = String(note || '').trim().slice(0, 300);
     const notes = text ? `${c.notes ? c.notes + '\n' : ''}${today} touch ${touches}: ${text}` : c.notes;
@@ -1139,9 +1137,10 @@ async function applyDisposition(db, c, outcome, note, today, callback) {
   if (outcome === 'interested' && c.stage !== 'Interested' && !['In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
   const sets = ['last_activity_at = ?', 'updated_at = ?'];
   const args = [ts, ts];
-  if (outcome === 'connected' || outcome === 'interested') { sets.push('next_follow_up = ?', "lost_reason = ''"); args.push(addDays(today, outcome === 'interested' ? 1 : 2)); }
+  if (outcome === 'connected' || outcome === 'interested') sets.push("lost_reason = ''");
   if (outcome === 'not_interested') { sets.push("stage = 'Lost'", "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?'); args.push(today); }
-  if (outcome === 'callback') { sets.push('next_follow_up = ?'); args.push(isDate(callback) ? callback : addDays(today, 1)); }
+  // "Call back later" is the one outcome that asks for a date, so it becomes a task.
+  if (outcome === 'callback') await db.prepare('INSERT INTO tasks (contact_id, title, due) VALUES (?, ?, ?)').bind(id, 'Call back', isDate(callback) ? callback : addDays(today, 1)).run();
   if (outcome === 'bad_number') { sets.push("notes = CASE WHEN notes = '' THEN ? ELSE notes || char(10) || ? END"); args.push(`${today}: wrong number ${c.phone || ''}`, `${today}: wrong number ${c.phone || ''}`); }
   return db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, id).first();
 }

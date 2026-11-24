@@ -14,7 +14,9 @@ ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).stat
 const id=c.data.contact.id;
 ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{stage:'Interested',next_follow_up:'2026-11-20'}})).data.contact.stage==='Interested','patch stage+followup');
 ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{stage:'Bogus'}})).status===400,'bad stage rejected');
-const due=await api('/api/contacts?view=due&today=2026-11-22'); ok(due.data.contacts.length===1 && due.data.counts.due===1,'due view');
+await api('/api/tasks',{method:'POST',body:{title:'Send mockup',due:'2026-11-21',contact_id:id}});
+const due=await api('/api/contacts?view=due&today=2026-11-22'); ok(due.data.contacts.length===1 && due.data.counts.due===1 && due.data.contacts[0].task_title==='Send mockup','tasks due view');
+{ const pl=await api('/api/pipeline'); const c=pl.data.contacts.find(x=>x.id===id); ok(c.task_title==='Send mockup' && c.task_due==='2026-11-21' && c.open_tasks===1 && !('next_follow_up' in c),'pipeline card shows next task, no follow-up date'); }
 ok((await tw('/twilio/sms',{From:'+15552013344',Body:'hi there',MessageSid:'SM1'},true)).status===403,'bad signature rejected');
 ok((await tw('/twilio/sms',{From:'+15552013344',Body:'Yes send it over',MessageSid:'SM1'})).status===200,'inbound sms accepted');
 ok((await api(`/api/contacts/${id}`)).data.contact.opt_in_channel==='Texted us first','texting first records opt-in');
@@ -74,16 +76,17 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   ok((await api('/api/contacts',J({}))).status===400,'empty contact rejected');
   const pid=p.data.contact.id;
   ok((await api(`/api/contacts/${pid}/messages`,J({body:'hi'}))).status===409,'cannot text without a phone');
-  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.next_follow_up==='2026-11-24','touch 1 -> Attempt to connect, follow up in 2 days');
+  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.next_follow_up===null,'touch 1 -> Attempt to connect, no follow-up date');
   for (let i=0;i<3;i++) r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'}));
-  ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='No response' && r.data.contact.next_follow_up==='2027-02-20','4 touches with no reply -> Lost, retry in 90 days');
+  ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='No response' && r.data.contact.next_follow_up===null,'4 touches with no reply -> Lost, no follow-up date');
   r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Connected' && r.data.contact.touches===0,'replied -> Connected');
-  let tk=await api(`/api/tasks?contact=${pid}`); ok(tk.data.tasks.some(t=>t.title==='Send the demo link' && t.due==='2026-11-23'),'stage change adds auto task');
+  let tk=await api(`/api/tasks?contact=${pid}`); ok(!tk.data.tasks.some(t=>t.title==='Send the demo link'),'stage change adds no automatic task');
   r=await api(`/api/contacts/${pid}`,{method:'PATCH',body:{stage:'In build',value:'$1,200',hot:true,today:'2026-11-22'}});
   ok(r.data.contact.value===1200 && r.data.contact.hot===1 && r.data.contact.deadline==='2026-11-29','In build sets value, hot and 7 day deadline');
   r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In build','touch on active deal keeps stage');
   const nt=await api('/api/tasks',J({title:'Call back',due:'2026-11-21'})); ok(nt.status===201,'task created');
   ok((await api(`/api/tasks/${nt.data.task.id}`,{method:'PATCH',body:{done:true}})).data.task.done===1,'task done');
+  await api('/api/tasks',J({title:'Chase payment',contact_id:pid}));
   { const all=await api('/api/tasks?doneLimit=200'); ok(all.data.done.some(t=>t.id===nt.data.task.id) && all.data.tasks.some(t=>t.contact_id===pid && t.contact_stage==='In build'),'tasks list has done tasks and contact stage'); }
   const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.open_value>=1200,'pipeline counts In build value');
   { const a=await api('/api/contacts',J({business:'Bulk A',instagram:'bulk.a'})), b=await api('/api/contacts',J({business:'Bulk B',instagram:'bulk.b'}));
@@ -98,10 +101,12 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
 { const J=(b)=>({method:'POST',body:b});
   const c=await api('/api/contacts',J({phone:'5554443322',business:'Dial Test'})); const id=c.data.contact.id;
   let r=await api(`/api/contacts/${id}/disposition`,J({outcome:'no_answer',today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.touches===1,'dialer no answer = touch');
-  r=await api(`/api/contacts/${id}/disposition`,J({outcome:'interested',note:'wants demo',today:'2026-11-22'})); ok(r.data.contact.stage==='Interested' && r.data.contact.next_follow_up==='2026-11-23','dialer interested moves stage');
+  r=await api(`/api/contacts/${id}/disposition`,J({outcome:'interested',note:'wants demo',today:'2026-11-22'})); ok(r.data.contact.stage==='Interested' && r.data.contact.next_follow_up===null,'dialer interested moves stage');
+  r=await api(`/api/contacts/${id}/disposition`,J({outcome:'callback',callback:'2026-11-25',today:'2026-11-22'}));
+  { const t=await api(`/api/tasks?contact=${id}`); ok(t.data.tasks.some(x=>x.title==='Call back' && x.due==='2026-11-25' && !x.done),'call back later -> task with that date'); }
   ok((await api(`/api/contacts/${id}/disposition`,J({outcome:'bogus'}))).status===400,'bad outcome rejected');
   ok((await api(`/api/contacts/${id}/notes`,J({body:'Sent DM',kind:'dm'}))).status===200,'log DM note');
-  const tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.filter(i=>i.type==='activity').length===3,'activities on timeline');
+  const tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.filter(i=>i.type==='activity').length===4,'activities on timeline');
   const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
 { const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400,'assistant asks for a screenshot or text'); }

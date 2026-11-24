@@ -4,7 +4,7 @@
   const state = {
     me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', source: '', q: '',
     pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '', showLost: false,
-    queue: [], qi: 0, queueFilter: 'due', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
+    queue: [], qi: 0, queueFilter: 'tasks', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
   };
 
@@ -179,7 +179,7 @@
       ['Pipeline', money(stats.open_value), `${stats.open_count} deal${stats.open_count === 1 ? '' : 's'} in Interested + In build`, 'gold'],
       ['Closed won this month', money(stats.won_value), `${stats.won_count} site${stats.won_count === 1 ? '' : 's'} live`, 'green'],
       ['Calls today', stats.dials_today, `${stats.connects_today} connected`, 'blue'],
-      ['Follow-ups due', stats.due, `${stats.tasks_due} task${stats.tasks_due === 1 ? '' : 's'} due too`, 'red'],
+      ['Tasks due', stats.tasks_due, 'Due today or overdue', 'red'],
     ].map(([k, v, s, c]) => `<div class="kpi kpi-${c}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></div>`).join('');
     const by = Object.fromEntries((stats.stages || []).map((x) => [x.stage, x]));
     const board = state.me.stages.filter((s) => s !== 'Lost' && s !== 'LTO');
@@ -196,24 +196,10 @@
     $('upcomingList').innerHTML = soon.map(taskRow).join('') || '<li class="empty-row">No tasks in the next 7 days.</li>';
     $('taskSummary').textContent = due.length ? `${due.length} due` : '';
     setTaskCount(due.length);
-    const follow = state.pipeline.filter((c) => c.next_follow_up && c.next_follow_up <= t && c.stage !== 'Lost' && c.stage !== 'Closed won + site live')
-      .sort((a, b) => (b.hot - a.hot) || a.next_follow_up.localeCompare(b.next_follow_up));
-    $('followSummary').textContent = follow.length ? `${follow.length} due` : '';
-    $('followList').innerHTML = follow.map(followRow).join('') || '<li class="empty-row">No follow-ups due today.</li>';
     const stale = state.pipeline.map((c) => [c, staleDays(c)]).filter(([, d]) => d).sort((a, b) => b[1] - a[1]);
     $('staleList').innerHTML = stale.map(([c, d]) => `<li class="work">${avatar(c, 'sm')}<div class="w-main"><a href="#c/${c.id}" class="w-name">${esc(displayName(c))}</a>
       <div class="muted">${esc(c.stage)} for ${d} days with no activity${c.value ? ' · ' + money(c.value) : ''}</div></div></li>`).join('') || '<li class="empty-row">No stuck deals.</li>';
-    $('homeCount').textContent = (due.length + follow.length) || '';
-  }
-
-  function followRow(c) {
-    const t = today();
-    const early = ['Prospects', 'Attempt to connect'].includes(c.stage);
-    return `<li class="work">${avatar(c, 'sm')}
-      <div class="w-main"><a href="#c/${c.id}" class="w-name">${esc(displayName(c))}</a>${c.hot ? '<span class="tag hot">Hot</span>' : ''}
-        <div class="muted">${esc(c.stage)}${early ? ' · ' + (c.touches ? `touch ${c.touches} of ${state.me.maxTouches} sent` : 'not contacted yet') : ''}${c.next_follow_up < t ? ` · ${daysBetween(c.next_follow_up, t)}d late` : ''}${c.next_step ? ' · ' + esc(c.next_step) : ''}</div></div>
-      <div class="w-act">${c.phone ? `<button class="btn small call" data-dial="${c.id}">Call</button>` : ''}${c.instagram ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(igUrl(c.instagram))}">DM</a>` : ''}<button class="btn small" data-touch="${c.id}">Log touch</button><button class="btn small" data-replied="${c.id}">Replied</button></div>
-    </li>`;
+    $('homeCount').textContent = due.length || '';
   }
 
   function taskRow(x) {
@@ -228,8 +214,8 @@
 
   async function logTouch(id) {
     const { contact } = await api(`/api/contacts/${id}/touch`, { method: 'POST', body: { today: today() } });
-    toast(contact.stage === 'Lost' ? `${displayName(contact)} moved to Lost (no response). Retry on ${shortDate(contact.next_follow_up)}.`
-      : `Touch logged. Next follow-up ${shortDate(contact.next_follow_up)}.`);
+    toast(contact.stage === 'Lost' ? `${displayName(contact)} moved to Lost (no response).`
+      : `Touch ${contact.touches} logged.`);
     return contact;
   }
   async function markReplied(id) {
@@ -363,11 +349,9 @@
       return `<section class="col ${stageClass(s)}" data-stage="${esc(s)}">
         <header><div class="col-title"><b>${esc(s)}</b><span class="col-n">${cards.length}</span></div></header>
         <div class="cards">${cards.map((c) => {
-          const due = c.next_follow_up && c.next_follow_up <= t;
           const st = staleDays(c);
           const tags = [
             c.hot ? '<span class="tag hot">Hot</span>' : '',
-            c.next_follow_up && s !== 'Lost' ? `<span class="tag ${due ? 'due' : ''}">${due ? 'Due' : 'Next'} ${esc(shortDate(c.next_follow_up))}</span>` : '',
             c.touches && (s === 'Attempt to connect' || s === 'LTO') ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '',
             st ? `<span class="tag stale">Stuck ${st}d</span>` : '',
             c.deadline && s === 'In build' ? `<span class="tag ${c.deadline <= t ? 'due' : ''}">Deliver ${esc(shortDate(c.deadline))}</span>` : '',
@@ -377,11 +361,12 @@
           const sel = state.sel.has(c.id);
           return `<article class="dcard ${c.hot ? 'is-hot' : ''} ${st ? 'is-stale' : ''} ${sel ? 'is-sel' : ''}" draggable="true" data-id="${c.id}">
             <div class="d-top">${avatar(c, 'sm')}<span class="d-name">${esc(displayName(c))}</span>
-              <span class="d-tools"><button type="button" class="d-del" data-del="${c.id}" title="Delete deal" aria-label="Delete ${esc(displayName(c))}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button>
+              <span class="d-tools"><button type="button" class="d-add" data-addtask="${c.id}" title="Add a task or reminder" aria-label="Add a task for ${esc(displayName(c))}"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h6M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M18 15v6M15 18h6"/></svg></button><button type="button" class="d-del" data-del="${c.id}" title="Delete deal" aria-label="Delete ${esc(displayName(c))}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button>
               <input type="checkbox" class="d-sel" data-sel="${c.id}" ${sel ? 'checked' : ''} title="Select" aria-label="Select ${esc(displayName(c))}"></span></div>
             <div class="d-amt"><span class="muted">Amount:</span> ${c.value ? money(c.value) : '<span class="muted">-</span>'}</div>
             ${c.next_step ? `<div class="d-next">${esc(c.next_step)}</div>` : ''}
             ${tags ? `<div class="row wrap">${tags}</div>` : ''}
+            ${c.task_id ? `<div class="d-task ${c.task_due && c.task_due < t ? 'late' : c.task_due === t ? 'today' : ''}" title="Next task${c.open_tasks > 1 ? ` (${c.open_tasks} open)` : ''}"><span class="d-task-ic">☐</span><span class="d-task-t">${esc(c.task_title)}</span>${c.task_due ? `<b>${c.task_due === t ? 'Today' : esc(shortDate(c.task_due))}</b>` : ''}${c.open_tasks > 1 ? `<i>+${c.open_tasks - 1}</i>` : ''}</div>` : ''}
             <div class="d-icons">${c.phone ? '<span title="Has phone">☎</span>' : ''}${c.instagram ? '<span title="Instagram">IG</span>' : ''}${c.email ? '<span title="Email">@</span>' : ''}</div>
           </article>`;
         }).join('') || '<div class="col-empty">No deals</div>'}</div>
@@ -390,6 +375,24 @@
     }).join('');
     renderSelBar();
   }
+  // ---- "+ Task" shortcut on a deal card ----
+  function openQuickTask(id) {
+    const c = state.pipeline.find((x) => x.id === id); if (!c) return;
+    $('qtForm').reset(); $('qtForm').dataset.id = id;
+    $('qtWho').textContent = displayName(c);
+    $('qtDialog').showModal(); $('qtTitle').focus();
+  }
+  document.querySelectorAll('[data-qtdays]').forEach((b) => b.addEventListener('click', () => { $('qtDue').value = today(Number(b.dataset.qtdays)); }));
+  $('qtForm').addEventListener('submit', async (e) => {
+    if (e.submitter && e.submitter.value === 'cancel') return;
+    e.preventDefault();
+    try {
+      await api('/api/tasks', { method: 'POST', body: { title: $('qtTitle').value, due: $('qtDue').value || null, contact_id: Number($('qtForm').dataset.id) } });
+      $('qtDialog').close(); toast('Task added.');
+      if (state.page === 'pipeline') loadBoard(); else if (state.page === 'dialer') loadQueue();
+    } catch (err) { toast(err.message); }
+  });
+
   // ---- select + delete deals on the board ----
   function renderSelBar() {
     for (const id of [...state.sel]) if (!state.pipeline.some((c) => c.id === id)) state.sel.delete(id);
@@ -438,6 +441,7 @@
     const id = Number(card.dataset.id);
     const del = e.target.closest('[data-del]');
     if (del) { e.preventDefault(); confirmDelete([id]); return; }
+    if (e.target.closest('[data-addtask]')) { e.preventDefault(); openQuickTask(id); return; }
     // Tick the box, or Cmd/Ctrl/Shift-click a card, or click any card while some are selected: toggle selection.
     if (e.target.closest('[data-sel]') || e.metaKey || e.ctrlKey || e.shiftKey || state.sel.size) {
       if (!e.target.closest('[data-sel]')) e.preventDefault();
@@ -490,7 +494,7 @@
     const t = today();
     $('contactsSub').textContent = `${state.contacts.length} contact${state.contacts.length === 1 ? '' : 's'}`;
     $('contactRows').innerHTML = state.contacts.map((c) => {
-      const due = c.next_follow_up && c.next_follow_up <= t;
+      const due = c.task_due && c.task_due <= t;
       return `<tr data-id="${c.id}" class="${c.unread ? 'unread' : ''}">
         <td><div class="name-cell">${avatar(c, 'sm')}<div><a href="#c/${c.id}" class="cname">${esc(displayName(c))}</a>${c.hot ? ' <span class="tag hot">Hot</span>' : ''}${c.unread ? ' <span class="tag due">New text</span>' : ''}
           <div class="muted">${esc(c.last_body ? (c.last_direction === 'out' ? 'You: ' : '') + c.last_body : (c.instagram ? '@' + c.instagram : c.email || ''))}</div></div></div></td>
@@ -498,7 +502,7 @@
         <td class="hide-s">${c.source ? esc(c.source) : '<span class="muted">-</span>'}</td>
         <td class="num hide-s">${c.value ? money(c.value) : '<span class="muted">-</span>'}</td>
         <td class="hide-s">${esc(fmtPhone(c.phone)) || '<span class="muted">-</span>'}</td>
-        <td>${c.next_follow_up ? `<span class="${due ? 'late' : ''}">${esc(shortDate(c.next_follow_up))}</span>` : '<span class="muted">-</span>'}</td>
+        <td class="next-task">${c.task_title ? `<span class="nt-title">${esc(c.task_title)}</span>${c.task_due ? ` <span class="${due ? 'late' : ''}">· ${esc(shortDate(c.task_due))}</span>` : ''}` : '<span class="muted">-</span>'}</td>
         <td class="hide-s muted">${esc(when(c.last_activity_at || c.updated_at))}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty-row">No contacts here.</td></tr>';
@@ -534,7 +538,7 @@
     $('rAvatar').outerHTML = avatar(c, 'lg').replace('<span ', '<span id="rAvatar" ');
     $('cName').textContent = displayName(c);
     $('cSub').textContent = subline(c);
-    $('fStage').value = c.stage; $('fFollow').value = c.next_follow_up || '';
+    $('fStage').value = c.stage;
     $('fValue').value = c.value ?? ''; $('fHot').checked = Boolean(c.hot); $('fNext').value = c.next_step || '';
     $('fLost').value = c.lost_reason || ''; $('fDeadline').value = c.deadline || '';
     $('lostWrap').hidden = c.stage !== 'Lost'; $('deadlineWrap').hidden = c.stage !== 'In build';
@@ -545,7 +549,7 @@
     const early = ['Prospects', 'Attempt to connect', 'LTO', 'Lost'].includes(c.stage);
     $('touchText').textContent = early
       ? (c.touches ? `${c.touches} of ${state.me.maxTouches} touches sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet')
-      : (c.last_touch ? `Last touch ${shortDate(c.last_touch)}` : 'Log a touch when you follow up');
+      : (c.last_touch ? `Last touch ${shortDate(c.last_touch)}` : 'Log a touch when you reach out');
     $('igBtn').classList.toggle('disabled', !c.instagram); $('igBtn').href = c.instagram ? igUrl(c.instagram) : '#';
     $('mailBtn').classList.toggle('disabled', !c.email); $('mailBtn').href = c.email ? `mailto:${c.email}` : '#';
     $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone || '';
@@ -643,7 +647,7 @@
   }
 
   // Autosave contact fields.
-  const fieldMap = { fStage: 'stage', fFollow: 'next_follow_up', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fSource: 'source', fNotes: 'notes' };
+  const fieldMap = { fStage: 'stage', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fSource: 'source', fNotes: 'notes' };
   async function saveField(key, value) {
     if (!state.current) return;
     $('saveState').textContent = 'Saving…';
@@ -655,10 +659,6 @@
   }
   Object.entries(fieldMap).forEach(([id, key]) => $(id).addEventListener('change', (e) => saveField(key, e.target.value)));
   $('fHot').addEventListener('change', (e) => saveField('hot', e.target.checked));
-  document.querySelectorAll('[data-days]').forEach((b) => b.addEventListener('click', () => {
-    const v = today(Number(b.dataset.days)); $('fFollow').value = v; saveField('next_follow_up', v);
-  }));
-  $('clearFollow').addEventListener('click', () => { $('fFollow').value = ''; saveField('next_follow_up', null); });
   $('deleteBtn').addEventListener('click', async () => {
     if (!state.current) return;
     if (!window.confirm(`Delete ${displayName(state.current)} and all their texts, calls and notes?`)) return;
@@ -746,9 +746,9 @@
     state.pipeline = contacts;
     const f = state.queueFilter; const t = today();
     let q = contacts.filter((c) => c.phone && c.stage !== 'Closed won + site live');
-    if (f === 'due') q = q.filter((c) => c.next_follow_up && c.next_follow_up <= t && c.stage !== 'Lost');
+    if (f === 'tasks') q = q.filter((c) => c.task_due && c.task_due <= t && c.stage !== 'Lost');
     else if (f !== 'all') q = q.filter((c) => c.stage === f);
-    q.sort((a, b) => (b.hot - a.hot) || String(a.next_follow_up || '9999').localeCompare(String(b.next_follow_up || '9999')));
+    q.sort((a, b) => (b.hot - a.hot) || String(a.task_due || '9999').localeCompare(String(b.task_due || '9999')));
     const keep = state.queue[state.qi] && state.queue[state.qi].id;
     state.queue = q;
     state.qi = 0;
@@ -769,7 +769,7 @@
   function renderQueue() {
     $('queueCount').textContent = `${state.queue.length} to call`;
     $('queueList').innerHTML = state.queue.map((c, i) => `<li class="${i === state.qi ? 'cur' : ''} ${i < state.qi ? 'past' : ''}" data-qi="${i}">
-      ${avatar(c, 'sm')}<div class="grow"><b>${esc(displayName(c))}</b><div class="muted">${esc(c.stage)}${c.next_follow_up ? ' · ' + esc(shortDate(c.next_follow_up)) : ''}</div></div>${c.hot ? '<span class="tag hot">Hot</span>' : ''}</li>`).join('')
+      ${avatar(c, 'sm')}<div class="grow"><b>${esc(displayName(c))}</b><div class="muted">${esc(c.stage)}${c.task_title ? ' · ' + esc(c.task_title) + (c.task_due ? ' ' + esc(shortDate(c.task_due)) : '') : ''}</div></div>${c.hot ? '<span class="tag hot">Hot</span>' : ''}</li>`).join('')
       || '<li class="empty-row">No one with a phone number in this list.</li>';
   }
   function renderSession() {
@@ -1209,12 +1209,12 @@
       const v = Object.fromEntries([...li.querySelectorAll('[data-k]')].map((x) => [x.dataset.k, x.value.trim()]));
       const head = [v.trade, v.city].filter(Boolean).join(' · ');
       const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, email: v.email, website: v.website, source: v.source,
-        stage: v.stage, value: v.value, next_follow_up: today(), notes: [head, v.notes, 'Added by the lead assistant ' + today()].filter(Boolean).join('\n') };
+        stage: v.stage, value: v.value, notes: [head, v.notes, 'Added by the lead assistant ' + today()].filter(Boolean).join('\n') };
       b.disabled = true;
       try {
         const { contact } = await api('/api/contacts', { method: 'POST', body });
         li.querySelectorAll('input,textarea,select,button').forEach((x) => { x.disabled = true; });
-        aiLog(`Added <a href="#c/${contact.id}">${esc(displayName(contact))}</a> to ${esc(contact.stage)}. Follow-up set for today.`, 'ai-msg bot');
+        aiLog(`Added <a href="#c/${contact.id}">${esc(displayName(contact))}</a> to ${esc(contact.stage)}.`, 'ai-msg bot');
         if (['home', 'pipeline', 'contacts'].includes(state.page)) route();
       } catch (err) { b.disabled = false; aiLog(esc(err.message), 'ai-msg bot err'); }
     });
