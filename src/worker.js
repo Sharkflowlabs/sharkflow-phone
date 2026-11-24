@@ -276,14 +276,17 @@ async function handleApi(request, env, url) {
   if (path === '/api/tasks' && method === 'GET') {
     const today = todayFrom(url.searchParams.get('today'));
     const contactId = url.searchParams.get('contact');
-    const base = `SELECT t.*, c.name AS contact_name, c.business AS contact_business FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id`;
+    const base = `SELECT t.*, c.name AS contact_name, c.business AS contact_business, c.instagram AS contact_instagram, c.phone AS contact_phone, c.stage AS contact_stage, c.hot AS contact_hot
+      FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id`;
     if (contactId) {
       const { results } = await db.prepare(`${base} WHERE t.contact_id = ? ORDER BY t.done, COALESCE(t.due,'9999'), t.id`).bind(Number(contactId)).all();
       return json({ tasks: results });
     }
+    // The Tasks page asks for more finished tasks (doneLimit) than Home does.
+    const doneLimit = Math.min(Math.max(Number(url.searchParams.get('doneLimit')) || 20, 1), 300);
     const [open, done] = await db.batch([
       db.prepare(`${base} WHERE t.done = 0 ORDER BY COALESCE(t.due,'9999'), t.id LIMIT 500`),
-      db.prepare(`${base} WHERE t.done = 1 ORDER BY t.done_at DESC LIMIT 20`),
+      db.prepare(`${base} WHERE t.done = 1 ORDER BY t.done_at DESC LIMIT ?`).bind(doneLimit),
     ]);
     return json({ tasks: open.results, done: done.results, today });
   }

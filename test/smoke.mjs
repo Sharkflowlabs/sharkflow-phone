@@ -84,6 +84,7 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='In build','touch on active deal keeps stage');
   const nt=await api('/api/tasks',J({title:'Call back',due:'2026-11-21'})); ok(nt.status===201,'task created');
   ok((await api(`/api/tasks/${nt.data.task.id}`,{method:'PATCH',body:{done:true}})).data.task.done===1,'task done');
+  { const all=await api('/api/tasks?doneLimit=200'); ok(all.data.done.some(t=>t.id===nt.data.task.id) && all.data.tasks.some(t=>t.contact_id===pid && t.contact_stage==='In build'),'tasks list has done tasks and contact stage'); }
   const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.open_value>=1200,'pipeline counts In build value');
   const pr=await api('/api/prospects',J({lines:['@new.paint, New Paint','instagram.com/acme.roof','!!bad']})); ok(pr.data.added===1 && pr.data.skipped===2,'bulk Instagram paste skips duplicates');
   ok((await api('/api/pipeline')).data.contacts.length>=3,'pipeline list');

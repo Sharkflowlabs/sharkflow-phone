@@ -3,7 +3,7 @@
   const $ = (id) => document.getElementById(id);
   const state = {
     me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', source: '', q: '',
-    pipeline: [], tasks: [], stats: {}, boardQ: '', showLost: false,
+    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, boardQ: '', showLost: false,
     queue: [], qi: 0, queueFilter: 'due', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
   };
@@ -93,6 +93,7 @@
     $('aiFab').hidden = false;
     const opts = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
     $('stageFilter').insertAdjacentHTML('beforeend', opts);
+    $('tkStage').insertAdjacentHTML('beforeend', opts);
     $('fStage').innerHTML = opts; $('newStage').innerHTML = opts;
     const srcOpts = (state.me.sources || []).map((x) => `<option>${esc(x)}</option>`).join('');
     $('fSource').insertAdjacentHTML('beforeend', srcOpts); $('newSource').insertAdjacentHTML('beforeend', srcOpts);
@@ -118,7 +119,7 @@
   function route() {
     const h = location.hash.slice(1) || lsGet('page') || 'home';
     const m = /^c\/(\d+)$/.exec(h);
-    const page = m ? 'record' : (['home', 'dialer', 'pipeline', 'contacts'].includes(h) ? h : 'home');
+    const page = m ? 'record' : (['home', 'dialer', 'pipeline', 'contacts', 'tasks'].includes(h) ? h : 'home');
     state.page = page;
     if (!m) lsSet('page', page);
     document.querySelectorAll('.page').forEach((p) => { p.hidden = p.id !== 'page-' + page; });
@@ -126,6 +127,7 @@
     if (page === 'home') loadHome().catch((e) => toast(e.message));
     if (page === 'pipeline') loadBoard().catch((e) => toast(e.message));
     if (page === 'contacts') loadContacts().catch((e) => toast(e.message));
+    if (page === 'tasks') loadTasks().catch((e) => toast(e.message));
     if (page === 'dialer') { loadQueue().catch((e) => toast(e.message)); loadCallLog(); }
     if (page === 'record') openContact(Number(m[1])).catch((e) => toast(e.message));
     document.querySelector('.main').scrollTop = 0;
@@ -193,6 +195,7 @@
     $('doList').innerHTML = [...due, ...noDate].map(taskRow).join('') || '<li class="empty-row">Nothing due. Nice.</li>';
     $('upcomingList').innerHTML = soon.map(taskRow).join('') || '<li class="empty-row">No tasks in the next 7 days.</li>';
     $('taskSummary').textContent = due.length ? `${due.length} due` : '';
+    setTaskCount(due.length);
     const follow = state.pipeline.filter((c) => c.next_follow_up && c.next_follow_up <= t && c.stage !== 'Lost' && c.stage !== 'Closed won + site live')
       .sort((a, b) => (b.hot - a.hot) || a.next_follow_up.localeCompare(b.next_follow_up));
     $('followSummary').textContent = follow.length ? `${follow.length} due` : '';
@@ -254,6 +257,7 @@
   });
   function refreshTasks() {
     if (state.page === 'home') loadHome().catch(() => {});
+    if (state.page === 'tasks') loadTasks().catch(() => {});
     if (state.page === 'record') loadContactTasks().catch(() => {});
   }
   $('taskForm').addEventListener('submit', async (e) => {
@@ -275,6 +279,73 @@
   });
 
   // ---------- pipeline board ----------
+  // ---------- tasks (a section under Contacts) ----------
+  function setTaskCount(n) {
+    $('tasksCount').textContent = n || '';
+    document.querySelectorAll('[data-tasks-n]').forEach((el) => { el.textContent = n || ''; });
+  }
+  async function loadTasks() {
+    const t = today();
+    const [tasks, pipe] = await Promise.all([api(`/api/tasks?today=${t}&doneLimit=200`), api('/api/pipeline')]);
+    state.tk.open = tasks.tasks; state.tk.done = tasks.done || []; state.pipeline = pipe.contacts;
+    $('tkContacts').innerHTML = pipe.contacts.map((c) => `<option value="${esc(displayName(c))} · #${c.id}"></option>`).join('');
+    renderTasks();
+  }
+  function renderTasks() {
+    const t = today(), wk = today(7);
+    const open = state.tk.open;
+    const groups = {
+      open, done: state.tk.done,
+      overdue: open.filter((x) => x.due && x.due < t),
+      today: open.filter((x) => x.due === t),
+      upcoming: open.filter((x) => x.due && x.due > t),
+      nodate: open.filter((x) => !x.due),
+    };
+    const dueNow = groups.overdue.length + groups.today.length;
+    setTaskCount(dueNow);
+    $('tasksSub').textContent = `${open.length} open task${open.length === 1 ? '' : 's'}${dueNow ? ` · ${dueNow} due now` : ''}`;
+    $('taskKpis').innerHTML = [
+      ['Overdue', groups.overdue.length, 'Past their due date', 'red', 'overdue'],
+      ['Due today', groups.today.length, shortDate(t), 'gold', 'today'],
+      ['Next 7 days', open.filter((x) => x.due && x.due > t && x.due <= wk).length, `${groups.nodate.length} with no date`, 'blue', 'upcoming'],
+      ['Done', state.tk.done.filter((x) => (x.done_at || '').slice(0, 10) >= today(-7)).length, 'Finished in the last 7 days', 'green', 'done'],
+    ].map(([k, v, sub, c, view]) => `<button type="button" class="kpi kpi-${c}" data-tkgo="${view}"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${esc(sub)}</span></button>`).join('');
+    document.querySelectorAll('#tkViews [data-c]').forEach((el) => { el.textContent = groups[el.dataset.c].length || ''; });
+    document.querySelectorAll('#tkViews .tab').forEach((b) => b.classList.toggle('active', b.dataset.tk === state.tk.view));
+    const q = state.tk.q.toLowerCase();
+    const rows = groups[state.tk.view].filter((x) => (!state.tk.stage || x.contact_stage === state.tk.stage)
+      && (!q || [x.title, x.contact_name, x.contact_business, x.contact_instagram].join(' ').toLowerCase().includes(q)));
+    $('tkRows').innerHTML = rows.map((x) => {
+      const late = !x.done && x.due && x.due < t;
+      const isToday = !x.done && x.due === t;
+      const c = { name: x.contact_name, business: x.contact_business, instagram: x.contact_instagram, phone: x.contact_phone };
+      const dueTxt = x.done ? `Done ${esc(shortDate((x.done_at || '').slice(0, 10)))}`
+        : x.due ? (late ? `Overdue · ${esc(shortDate(x.due))}` : isToday ? 'Today' : esc(shortDate(x.due))) : '<span class="muted">No date</span>';
+      return `<tr class="${x.done ? 'is-done' : ''} ${late ? 'is-late' : ''}">
+        <td class="tk-cb"><input type="checkbox" data-done="${x.id}" ${x.done ? 'checked' : ''} aria-label="Mark done"></td>
+        <td><span class="tk-title">${esc(x.title)}</span>${x.auto ? ' <span class="tag">Auto</span>' : ''}</td>
+        <td>${x.contact_id ? `<a class="tk-who" href="#c/${x.contact_id}">${avatar(c, 'sm')}<span>${esc(displayName(c))}</span></a>${x.contact_hot ? ' <span class="tag hot">Hot</span>' : ''}` : '<span class="muted">-</span>'}</td>
+        <td class="hide-s">${x.contact_stage ? stagePill(x.contact_stage) : ''}</td>
+        <td class="tk-due ${late ? 'late' : isToday ? 'today' : ''}">${dueTxt}</td>
+        <td class="tk-x"><button type="button" class="link danger" data-deltask="${x.id}" aria-label="Delete task">✕</button></td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="6" class="empty-row tk-empty">${state.tk.view === 'done' ? 'No finished tasks yet.' : 'Nothing here. Nice.'}</td></tr>`;
+  }
+  $('tkViews').addEventListener('click', (e) => { const b = e.target.closest('[data-tk]'); if (b) { state.tk.view = b.dataset.tk; renderTasks(); } });
+  $('taskKpis').addEventListener('click', (e) => { const b = e.target.closest('[data-tkgo]'); if (b) { state.tk.view = b.dataset.tkgo; renderTasks(); } });
+  $('tkSearch').addEventListener('input', (e) => { state.tk.q = e.target.value.trim(); renderTasks(); });
+  $('tkStage').addEventListener('change', (e) => { state.tk.stage = e.target.value; renderTasks(); });
+  $('tkForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const who = $('tkContact').value.trim();
+    const m = /#(\d+)$/.exec(who);
+    if (who && !m) { toast('Pick the contact from the list, or leave it empty.'); return; }
+    try {
+      await api('/api/tasks', { method: 'POST', body: { title: $('tkTitle').value, due: $('tkDue').value || null, contact_id: m ? Number(m[1]) : null } });
+      $('tkForm').reset(); toast('Task added.'); loadTasks();
+    } catch (err) { toast(err.message); }
+  });
+
   async function loadBoard() {
     const { contacts } = await api('/api/pipeline');
     state.pipeline = contacts; renderBoard();
@@ -303,7 +374,7 @@
             c.lost_reason && s === 'Lost' ? `<span class="tag">${esc(c.lost_reason)}</span>` : '',
             c.unread ? '<span class="tag due">New text</span>' : '',
           ].join('');
-          return `<article class="dcard ${c.hot ? 'is-hot' : ''}" draggable="true" data-id="${c.id}">
+          return `<article class="dcard ${c.hot ? 'is-hot' : ''} ${st ? 'is-stale' : ''}" draggable="true" data-id="${c.id}">
             <div class="d-top">${avatar(c, 'sm')}<span class="d-name">${esc(displayName(c))}</span></div>
             <div class="d-amt"><span class="muted">Amount:</span> ${c.value ? money(c.value) : '<span class="muted">-</span>'}</div>
             ${c.next_step ? `<div class="d-next">${esc(c.next_step)}</div>` : ''}
