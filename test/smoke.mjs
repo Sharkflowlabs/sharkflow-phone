@@ -110,3 +110,5 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
 { const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400,'assistant asks for a screenshot or text'); }
+{ const me=await api('/api/me'); ok(me.data.senderEmail==='hello@sharkflowlabs.com','sender email for Gmail drafts');
+  const r=await api('/api/assistant/draft',{method:'POST',body:{contact_id:1,channel:'email',instructions:''}}); ok(r.status===400||r.status===503,'draft needs instructions (or an AI engine)'); }

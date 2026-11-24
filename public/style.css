@@ -589,3 +589,13 @@ button.kpi:hover { border-color: var(--line-2); border-top-color: var(--c); }
 .d-tools { background: none; }
 .dcard:hover .d-tools, .dcard:focus-within .d-tools, .dcard.is-sel .d-tools, .board.selecting .d-tools { background: var(--panel-2); }
 .next-task { white-space: nowrap; }
+
+/* ===== Assistant: draft modes ===== */
+.ai-modes { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.ai-modes button { flex: 1; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--soft); border-radius: 8px; padding: 6px 4px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ai-modes button:hover:not(:disabled) { color: #fff; border-color: var(--gold); }
+.ai-modes button.active { background: var(--grad); border-color: transparent; color: #fff; }
+.ai-modes button:disabled { opacity: .4; cursor: not-allowed; }
+.ai-msg.sys { align-self: center; background: none; border: 0; color: var(--muted); font-size: 12px; padding: 2px; }
+.draft-card textarea { font-size: 13px; line-height: 1.45; resize: vertical; }
+.draft-card .row.wrap { gap: 6px; }
