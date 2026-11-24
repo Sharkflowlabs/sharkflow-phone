@@ -86,6 +86,11 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   ok((await api(`/api/tasks/${nt.data.task.id}`,{method:'PATCH',body:{done:true}})).data.task.done===1,'task done');
   { const all=await api('/api/tasks?doneLimit=200'); ok(all.data.done.some(t=>t.id===nt.data.task.id) && all.data.tasks.some(t=>t.contact_id===pid && t.contact_stage==='In build'),'tasks list has done tasks and contact stage'); }
   const st=await api('/api/stats?today=2026-11-22'); ok(st.data.active>=1 && st.data.open_value>=1200,'pipeline counts In build value');
+  { const a=await api('/api/contacts',J({business:'Bulk A',instagram:'bulk.a'})), b=await api('/api/contacts',J({business:'Bulk B',instagram:'bulk.b'}));
+    await api('/api/tasks',J({title:'x',contact_id:a.data.contact.id}));
+    const d=await api('/api/contacts/bulk-delete',J({ids:[a.data.contact.id,b.data.contact.id]})); const pl=await api('/api/pipeline');
+    ok(d.data.deleted===2 && !pl.data.contacts.some(c=>c.business.startsWith('Bulk ')),'bulk delete removes selected deals');
+    ok((await api('/api/contacts/bulk-delete',J({ids:[]}))).status===400,'bulk delete needs ids'); }
   const pr=await api('/api/prospects',J({lines:['@new.paint, New Paint','instagram.com/acme.roof','!!bad']})); ok(pr.data.added===1 && pr.data.skipped===2,'bulk Instagram paste skips duplicates');
   ok((await api('/api/pipeline')).data.contacts.length>=3,'pipeline list');
   ok((await api(`/api/contacts/${pid}`,{method:'DELETE',body:{}})).status===200,'delete contact with tasks'); }

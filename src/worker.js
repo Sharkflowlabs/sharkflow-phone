@@ -558,6 +558,20 @@ async function handleApi(request, env, url) {
     }
   }
 
+  if (path === '/api/contacts/bulk-delete' && method === 'POST') {
+    // Delete several deals/contacts at once (pipeline multi-select), with their texts, calls, tasks and notes.
+    const body = await readJson(request);
+    const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 500);
+    if (!ids.length) throw new HttpError(400, 'Pick at least one deal');
+    const stmts = [];
+    for (const id of ids) {
+      for (const t of ['messages', 'calls', 'tasks', 'activities']) stmts.push(db.prepare(`DELETE FROM ${t} WHERE contact_id = ?`).bind(id));
+      stmts.push(db.prepare('DELETE FROM contacts WHERE id = ?').bind(id));
+    }
+    await db.batch(stmts);
+    return json({ ok: true, deleted: ids.length });
+  }
+
   if ((m = path.match(/^\/api\/contacts\/(\d+)\/timeline$/)) && method === 'GET') {
     const id = Number(m[1]);
     const [msgs, calls, acts] = await db.batch([

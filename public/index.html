@@ -187,6 +187,13 @@
             <button class="btn" data-new>+ Deal</button>
           </div>
         </header>
+        <div class="selbar" id="selBar" hidden>
+          <b id="selCount">0 selected</b>
+          <button type="button" class="link" id="selAll">Select all shown</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="selClear">Cancel</button>
+          <button type="button" class="btn danger" id="selDelete">Delete</button>
+        </div>
         <div class="board" id="boardCols"></div>
       </section>
 
@@ -404,6 +411,14 @@
       </div>
       <p class="error" id="lcError"></p>
       <div class="row end"><button class="btn" value="cancel" formnovalidate>Skip</button><button class="btn primary" value="ok" id="lcSubmit">Save</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="delDialog">
+    <form method="dialog" class="dialog-form">
+      <h2 id="delTitle">Delete deal?</h2>
+      <p class="muted" id="delText"></p>
+      <div class="row end"><button class="btn" value="cancel" autofocus>Keep</button><button class="btn danger" value="ok" id="delGo">Delete</button></div>
     </form>
   </dialog>
 

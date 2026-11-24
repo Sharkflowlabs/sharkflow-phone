@@ -557,3 +557,18 @@ button.kpi:hover { border-color: var(--line-2); }
 }
 .tab { white-space: nowrap; }
 .dcard.is-hot.is-stale { border-color: color-mix(in srgb, var(--orange) 70%, transparent); }
+
+/* ===== Pipeline: select + delete deal cards ===== */
+.d-top { position: relative; }
+.d-name { flex: 1; min-width: 0; }
+.d-tools { display: flex; gap: 6px; align-items: center; margin-left: auto; flex: none; }
+.d-del { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 5px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; padding: 0; opacity: 0; transition: opacity .12s; }
+.d-del svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.d-del:hover, .d-del:focus-visible { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); background: var(--bad-bg); }
+.d-sel { width: 17px; height: 17px; margin: 0; accent-color: var(--gold); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.dcard:hover .d-del, .dcard:hover .d-sel, .dcard:focus-within .d-del, .dcard:focus-within .d-sel,
+.board.selecting .d-sel, .dcard.is-sel .d-sel { opacity: 1; }
+.dcard.is-sel { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 16px rgba(247, 181, 56, .18); background: color-mix(in srgb, var(--gold) 6%, var(--panel-2)); }
+@media (hover: none) { .d-del, .d-sel { opacity: 1; } }
+.selbar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 12px; border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-2)); border-radius: var(--radius); background: var(--accent-bg); position: sticky; top: 0; z-index: 3; }
+.selbar b { font-family: var(--display); text-transform: uppercase; letter-spacing: .07em; color: var(--gold); }

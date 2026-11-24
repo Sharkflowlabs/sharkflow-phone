@@ -3,7 +3,7 @@
   const $ = (id) => document.getElementById(id);
   const state = {
     me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', source: '', q: '',
-    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, boardQ: '', showLost: false,
+    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '', showLost: false,
     queue: [], qi: 0, queueFilter: 'due', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
   };
@@ -374,8 +374,11 @@
             c.lost_reason && s === 'Lost' ? `<span class="tag">${esc(c.lost_reason)}</span>` : '',
             c.unread ? '<span class="tag due">New text</span>' : '',
           ].join('');
-          return `<article class="dcard ${c.hot ? 'is-hot' : ''} ${st ? 'is-stale' : ''}" draggable="true" data-id="${c.id}">
-            <div class="d-top">${avatar(c, 'sm')}<span class="d-name">${esc(displayName(c))}</span></div>
+          const sel = state.sel.has(c.id);
+          return `<article class="dcard ${c.hot ? 'is-hot' : ''} ${st ? 'is-stale' : ''} ${sel ? 'is-sel' : ''}" draggable="true" data-id="${c.id}">
+            <div class="d-top">${avatar(c, 'sm')}<span class="d-name">${esc(displayName(c))}</span>
+              <span class="d-tools"><button type="button" class="d-del" data-del="${c.id}" title="Delete deal" aria-label="Delete ${esc(displayName(c))}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button>
+              <input type="checkbox" class="d-sel" data-sel="${c.id}" ${sel ? 'checked' : ''} title="Select" aria-label="Select ${esc(displayName(c))}"></span></div>
             <div class="d-amt"><span class="muted">Amount:</span> ${c.value ? money(c.value) : '<span class="muted">-</span>'}</div>
             ${c.next_step ? `<div class="d-next">${esc(c.next_step)}</div>` : ''}
             ${tags ? `<div class="row wrap">${tags}</div>` : ''}
@@ -385,10 +388,64 @@
         <footer class="col-foot"><span class="muted">Total amount</span><b>${money(total)}</b></footer>
       </section>`;
     }).join('');
+    renderSelBar();
   }
+  // ---- select + delete deals on the board ----
+  function renderSelBar() {
+    for (const id of [...state.sel]) if (!state.pipeline.some((c) => c.id === id)) state.sel.delete(id);
+    const n = state.sel.size;
+    $('selBar').hidden = !n;
+    $('boardCols').classList.toggle('selecting', n > 0);
+    $('selCount').textContent = `${n} selected`;
+  }
+  function confirmDelete(ids) {
+    const list = ids.map((id) => state.pipeline.find((c) => c.id === id)).filter(Boolean);
+    if (!list.length) return;
+    const one = list.length === 1;
+    $('delTitle').textContent = one ? `Delete ${displayName(list[0])}?` : `Delete ${list.length} deals?`;
+    $('delText').textContent = (one ? 'This removes the deal and the contact' : `This removes ${list.slice(0, 5).map(displayName).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}, with their contacts`)
+      + ', plus all their texts, calls, tasks and notes. It can\'t be undone.';
+    $('delGo').textContent = one ? 'Delete deal' : `Delete ${list.length} deals`;
+    $('delDialog').onclose = async () => {
+      if ($('delDialog').returnValue !== 'ok') return;
+      try {
+        if (one) await api(`/api/contacts/${list[0].id}`, { method: 'DELETE', body: {} });
+        else await api('/api/contacts/bulk-delete', { method: 'POST', body: { ids: list.map((c) => c.id) } });
+        list.forEach((c) => state.sel.delete(c.id));
+        toast(one ? `Deleted ${displayName(list[0])}.` : `Deleted ${list.length} deals.`);
+        await loadBoard();
+      } catch (err) { toast(err.message); }
+    };
+    $('delDialog').returnValue = '';
+    $('delDialog').showModal();
+  }
+  $('selClear').addEventListener('click', () => { state.sel.clear(); renderBoard(); });
+  $('selDelete').addEventListener('click', () => confirmDelete([...state.sel]));
+  $('selAll').addEventListener('click', () => {
+    document.querySelectorAll('#boardCols .dcard').forEach((el) => state.sel.add(Number(el.dataset.id)));
+    renderBoard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (state.page !== 'pipeline' || !state.sel.size || document.querySelector('dialog[open]')) return;
+    if (e.target.closest && e.target.closest('input:not(.d-sel), textarea, select')) return;
+    if (e.key === 'Escape') { state.sel.clear(); renderBoard(); }
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); confirmDelete([...state.sel]); }
+  });
   $('boardSearch').addEventListener('input', (e) => { state.boardQ = e.target.value.trim(); renderBoard(); });
   $('showLost').addEventListener('change', (e) => { state.showLost = e.target.checked; renderBoard(); });
-  $('boardCols').addEventListener('click', (e) => { const card = e.target.closest('.dcard'); if (card) goContact(card.dataset.id); });
+  $('boardCols').addEventListener('click', (e) => {
+    const card = e.target.closest('.dcard'); if (!card) return;
+    const id = Number(card.dataset.id);
+    const del = e.target.closest('[data-del]');
+    if (del) { e.preventDefault(); confirmDelete([id]); return; }
+    // Tick the box, or Cmd/Ctrl/Shift-click a card, or click any card while some are selected: toggle selection.
+    if (e.target.closest('[data-sel]') || e.metaKey || e.ctrlKey || e.shiftKey || state.sel.size) {
+      if (!e.target.closest('[data-sel]')) e.preventDefault();
+      state.sel.has(id) ? state.sel.delete(id) : state.sel.add(id);
+      renderBoard(); return;
+    }
+    goContact(id);
+  });
   let dragId = null;
   $('boardCols').addEventListener('dragstart', (e) => {
     const card = e.target.closest('.dcard'); if (!card) return;
