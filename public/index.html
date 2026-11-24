@@ -4,17 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#0b0b0d">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="/logo-icon.svg" type="image/svg+xml">
   <title>Sharkflow CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <!-- Login -->
   <section id="login" class="login" hidden>
     <form id="loginForm" class="login-card">
-      <div class="brand"><span class="fin"></span>sharkflow <b>CRM</b></div>
+      <div class="brand"><span class="fin"></span>sharkflow <b>crm</b></div>
       <label>Password<input id="password" type="password" autocomplete="current-password" required autofocus></label>
       <button class="btn primary" type="submit">Sign in</button>
       <p id="loginError" class="error" role="alert"></p>
@@ -58,10 +59,6 @@
             <details class="upcoming"><summary>Next 7 days</summary><ul id="upcomingList" class="worklist"></ul></details>
           </section>
           <section class="card">
-            <div class="card-head"><h2>Follow-ups due</h2><span class="muted" id="followSummary"></span></div>
-            <ul id="followList" class="worklist"></ul>
-          </section>
-          <section class="card">
             <div class="card-head"><h2>Stuck deals</h2></div>
             <ul id="staleList" class="worklist"></ul>
           </section>
@@ -88,7 +85,7 @@
           <aside class="card queue">
             <div class="card-head"><h2>Queue</h2><span class="muted" id="queueCount"></span></div>
             <select id="queueFilter" aria-label="Which list to call">
-              <option value="due">Follow-ups due</option>
+              <option value="tasks">Tasks due</option>
               <option value="Attempt to connect">Attempt to connect</option>
               <option value="Prospects">Prospects</option>
               <option value="Connected">Connected</option>
@@ -209,7 +206,7 @@
             <div class="views" role="tablist">
               <button data-view="" class="tab active">All</button>
               <button data-view="unread" class="tab">Unread <span id="unreadCount" class="count"></span></button>
-              <button data-view="due" class="tab">Follow up <span id="dueCount" class="count"></span></button>
+              <button data-view="due" class="tab">Tasks due <span id="dueCount" class="count"></span></button>
               <button data-view="hot" class="tab">Hot</button>
             </div>
             <div class="filters">
@@ -220,7 +217,7 @@
           </div>
           <div class="table-wrap">
             <table class="ctable">
-              <thead><tr><th>Name</th><th>Stage</th><th class="hide-s">Source</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next follow-up</th><th class="hide-s">Last activity</th></tr></thead>
+              <thead><tr><th>Name</th><th>Stage</th><th class="hide-s">Source</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next task</th><th class="hide-s">Last activity</th></tr></thead>
               <tbody id="contactRows"></tbody>
             </table>
           </div>
@@ -351,9 +348,6 @@
               <label id="lostWrap">Why lost<select id="fLost"><option value="">Pick one</option></select></label>
               <label id="deadlineWrap">Delivery deadline<input id="fDeadline" type="date"></label>
               <label>Next step<input id="fNext" maxlength="300" placeholder="e.g. Send mockup Tuesday"></label>
-              <label>Next follow-up
-                <span class="row"><input id="fFollow" type="date"><button type="button" class="link" data-days="3">+3d</button><button type="button" class="link" data-days="7">+7d</button><button type="button" class="link" id="clearFollow">clear</button></span>
-              </label>
               <div class="touch-row">
                 <span id="touchText" class="muted"></span>
                 <button type="button" class="btn small" id="touchBtn">Log touch</button>
@@ -411,6 +405,16 @@
       </div>
       <p class="error" id="lcError"></p>
       <div class="row end"><button class="btn" value="cancel" formnovalidate>Skip</button><button class="btn primary" value="ok" id="lcSubmit">Save</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="qtDialog">
+    <form method="dialog" id="qtForm" class="dialog-form">
+      <h2>New task</h2>
+      <p class="muted">For <b id="qtWho"></b></p>
+      <label>What to do<input id="qtTitle" maxlength="300" required placeholder="e.g. Send mockup, call back, chase payment"></label>
+      <label>Due (optional)<span class="row"><input id="qtDue" type="date"><button type="button" class="link" data-qtdays="0">Today</button><button type="button" class="link" data-qtdays="1">Tomorrow</button><button type="button" class="link" data-qtdays="7">+1 week</button></span></label>
+      <div class="row end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Add task</button></div>
     </form>
   </dialog>
 
