@@ -4,7 +4,7 @@ A one-person texting and calling inbox for Sharkflow Labs, on Twilio + Cloudflar
 
 - SMS inbox per contact, sending texts, STOP/START handling, opt-in required before texting
 - Browser calling (Twilio Voice JS SDK), inbound calls ring the browser (and optionally `FORWARD_TO`), voicemail
-- Pipeline stage + next follow-up date per contact, CSV import, password login
+- Pipeline stage + tasks per contact, paste-from-Google-Sheet or CSV import (preview + duplicate check), Prev / Next through leads, password login
 
 Full setup guide (Twilio, Cloudflare, toll-free / 10DLC answers): https://claude.ai/artifact/T3NV7vYKFGdo1urGUP3sZ3
 

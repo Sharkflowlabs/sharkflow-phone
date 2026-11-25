@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const STAGES = [
   'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'LTO', 'Lost',
 ];
-const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'Other'];
+const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'ZoomInfo', 'Other'];
 const FIRST = 'Prospects';
 const ATC = 'Attempt to connect';
 // Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
@@ -471,13 +471,21 @@ async function handleApi(request, env, url) {
   }
 
   if (path === '/api/import' && method === 'POST') {
-    const { rows } = await readJson(request);
-    if (!Array.isArray(rows) || rows.length > 2000) throw new HttpError(400, 'Send 1 to 2000 rows');
-    let added = 0, skipped = 0;
-    for (const row of rows) {
-      try { await createContact(db, row); added++; } catch { skipped++; }
+    // Bulk add from a pasted Google Sheet or a CSV. preview: true only checks the rows (new / duplicate / error)
+    // and saves nothing. Without it, every row that checks out as new is added; duplicates and errors are skipped.
+    const { rows, preview, stage } = await readJson(request);
+    if (!Array.isArray(rows) || !rows.length || rows.length > 2000) throw new HttpError(400, 'Send 1 to 2000 rows');
+    const checked = await checkImportRows(db, rows, STAGES.includes(stage) ? stage : FIRST);
+    if (preview) return json({ rows: checked.map(({ insert, ...r }) => r) });
+    const ok = checked.filter((r) => r.status === 'new');
+    const now = nowIso();
+    for (let i = 0; i < ok.length; i += 50) {
+      await db.batch(ok.slice(i, i + 50).map(({ insert: c }) => db.prepare(`INSERT OR IGNORE INTO contacts
+        (name, business, phone, email, website, instagram, stage, notes, value, source, stage_since, touches, last_touch, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(c.name, c.business, c.phone, c.email, c.website, c.instagram, c.stage, c.notes, c.value, c.source, now.slice(0, 10), c.touches, c.last_touch, now, now)));
     }
-    return json({ added, skipped });
+    return json({ added: ok.length, skipped: checked.length - ok.length, rows: checked.map(({ insert, ...r }) => r) });
   }
 
   if ((m = path.match(/^\/api\/contacts\/(\d+)$/))) {
@@ -835,6 +843,78 @@ async function extractWithClaude(env, images, ask) {
   if (response.stop_reason === 'refusal') throw new HttpError(422, 'The assistant could not read that one. Try a different screenshot.');
   const out = response.content.find((b) => b.type === 'text');
   return parseLeadJson(out ? out.text : '');
+}
+
+// Read a date the way people type it in a sheet: 2026-11-25, 11/25/2026, 11/25/26, Nov 25 2026. Returns YYYY-MM-DD or ''.
+function sheetDate(v) {
+  const real = (d) => {
+    const ms = isDate(d) ? Date.parse(d + 'T12:00:00Z') : NaN;
+    return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === d ? d : '';
+  };
+  const t = String(v ?? '').trim();
+  if (!t) return '';
+  if (isDate(t)) return real(t);
+  let m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(t);
+  if (m) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    const out = `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+    return real(out);
+  }
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return '';
+  return real(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+}
+
+// Check pasted rows against the CRM and against each other. Each row comes back as
+// new (with the cleaned contact in `insert`), duplicate (with what it matches) or error.
+async function checkImportRows(db, rows, defaultStage) {
+  const { results: existing } = await db.prepare('SELECT id, name, business, phone, email, instagram, stage FROM contacts').all();
+  const keyOf = (kind, v) => kind + ':' + String(v).toLowerCase();
+  const seen = new Map();
+  const remember = (c, ref) => {
+    if (c.phone) seen.set(keyOf('p', c.phone), ref);
+    if (c.email) seen.set(keyOf('e', c.email), ref);
+    if (c.instagram) seen.set(keyOf('i', c.instagram), ref);
+    if (c.business && c.business.length >= 4) seen.set(keyOf('b', c.business), ref);
+  };
+  for (const c of existing) remember(c, { id: c.id, name: c.business || c.name || c.phone || c.email, stage: c.stage });
+  const s = (v, n = 5000) => String(v ?? '').trim().slice(0, n);
+  return rows.map((row, i) => {
+    row = row && typeof row === 'object' ? row : {};
+    const c = {
+      name: s(row.name, 200), business: s(row.business, 200), email: s(row.email, 200).toLowerCase(), website: s(row.website, 500),
+      instagram: igHandle(row.instagram) || s(row.instagram, 200), notes: s(row.notes),
+      stage: STAGES.find((x) => x.toLowerCase() === s(row.stage).toLowerCase()) || defaultStage,
+      source: cleanSource(row.source), phone: null, value: null, touches: 0, last_touch: null,
+    };
+    const out = { line: i + 1, name: c.business || c.name || c.email || s(row.phone), stage: c.stage, source: c.source };
+    const rawPhone = s(row.phone);
+    if (rawPhone) {
+      c.phone = normalizePhone(rawPhone);
+      if (!c.phone) return { ...out, status: 'error', reason: `Phone "${rawPhone}" not recognized (use +countrycode for non-US)` };
+    }
+    out.phone = c.phone;
+    if (!c.phone && !c.instagram && !c.email && !c.name && !c.business) return { ...out, status: 'error', reason: 'Row has no business, name, phone, email or Instagram' };
+    if (s(row.value)) c.value = Math.round(Number(s(row.value).replace(/[$,\s]/g, ''))) || null;
+    const first = sheetDate(row.first_contact);
+    if (s(row.first_contact) && !first) return { ...out, status: 'error', reason: `First contact date "${s(row.first_contact)}" not recognized` };
+    if (first) {
+      c.last_touch = first;
+      if (EARLY.includes(c.stage)) c.touches = 1;
+      c.notes = [`First contact ${first}`, c.notes].filter(Boolean).join('\n');
+    }
+    const keys = [['p', c.phone], ['e', c.email], ['i', c.instagram], ['b', c.business && c.business.length >= 4 ? c.business : '']];
+    const why = { p: 'phone', e: 'email', i: 'Instagram', b: 'business name' };
+    for (const [kind, v] of keys) {
+      const hit = v && seen.get(keyOf(kind, v));
+      if (hit) {
+        return { ...out, status: 'duplicate', match: hit,
+          reason: hit.line ? `Same ${why[kind]} as row ${hit.line} of this paste` : `Same ${why[kind]} as ${hit.name} (already in CRM, ${hit.stage})` };
+      }
+    }
+    remember(c, { line: i + 1, name: out.name });
+    return { ...out, status: 'new', insert: c };
+  });
 }
 
 async function findDuplicates(db, lead) {

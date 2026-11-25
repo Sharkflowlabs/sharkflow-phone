@@ -6,6 +6,9 @@
     pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '', showLost: false,
     queue: [], qi: 0, queueFilter: 'tasks', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
+    // Smooth navigation: scroll position per page, the list a record was opened from (for Prev / Next),
+    // full contact rows we've already loaded, and a fingerprint of the last data drawn so polls only redraw on change.
+    scroll: {}, navIds: [], navFrom: 'contacts', cache: new Map(), sig: {},
   };
 
   // ---------- utils ----------
@@ -120,6 +123,13 @@
     const h = location.hash.slice(1) || lsGet('page') || 'home';
     const m = /^c\/(\d+)$/.exec(h);
     const page = m ? 'record' : (['home', 'dialer', 'pipeline', 'contacts', 'tasks'].includes(h) ? h : 'home');
+    const main = document.querySelector('.main');
+    const prev = state.page;
+    if (prev !== 'record') state.scroll[prev] = main.scrollTop;
+    // Opening a lead from a list: remember that list so Prev / Next can walk through it.
+    if (page === 'record' && prev === 'contacts') { state.navIds = state.contacts.map((c) => c.id); state.navFrom = 'contacts'; }
+    if (page === 'record' && prev === 'pipeline') { state.navIds = boardOrder().map((c) => c.id); state.navFrom = 'pipeline'; }
+    if (page === 'record' && (prev === 'tasks' || prev === 'home')) { state.navIds = []; state.navFrom = prev; }
     state.page = page;
     if (!m) lsSet('page', page);
     document.querySelectorAll('.page').forEach((p) => { p.hidden = p.id !== 'page-' + page; });
@@ -130,7 +140,8 @@
     if (page === 'tasks') loadTasks().catch((e) => toast(e.message));
     if (page === 'dialer') { loadQueue().catch((e) => toast(e.message)); loadCallLog(); }
     if (page === 'record') openContact(Number(m[1])).catch((e) => toast(e.message));
-    document.querySelector('.main').scrollTop = 0;
+    // Going back to a list puts you where you were instead of jumping to the top.
+    main.scrollTop = page === 'record' ? 0 : (state.scroll[page] || 0);
   }
   const goContact = (id) => { location.hash = 'c/' + id; };
 
@@ -334,13 +345,23 @@
 
   async function loadBoard() {
     const { contacts } = await api('/api/pipeline');
-    state.pipeline = contacts; renderBoard();
+    state.pipeline = contacts;
+    const sig = JSON.stringify(contacts);
+    if (sig === state.sig.board) return;
+    state.sig.board = sig;
+    renderBoard();
   }
+  const boardStages = () => state.me.stages.filter((s) => state.showLost || s !== 'Lost');
+  function boardList() {
+    const q = state.boardQ.toLowerCase();
+    return state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step, c.source].join(' ').toLowerCase().includes(q));
+  }
+  // Cards in the order they appear on the board: column by column, top to bottom.
+  const boardOrder = () => { const list = boardList(); return boardStages().flatMap((s) => list.filter((c) => c.stage === s)); };
   function renderBoard() {
     const t = today();
-    const q = state.boardQ.toLowerCase();
-    const stages = state.me.stages.filter((s) => state.showLost || s !== 'Lost');
-    const list = state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step, c.source].join(' ').toLowerCase().includes(q));
+    const stages = boardStages();
+    const list = boardList();
     const pipeTotal = state.pipeline.filter((c) => state.me.pipelineStages.includes(c.stage)).reduce((n, c) => n + (c.value || 0), 0);
     $('boardSub').textContent = `Pipeline ${money(pipeTotal)} (Interested + In build) · drag a card to move it`;
     $('boardCols').innerHTML = stages.map((s) => {
@@ -488,6 +509,10 @@
     if (state.q) params.set('q', state.q);
     const data = await api('/api/contacts?' + params);
     state.contacts = data.contacts; setCounts(data.counts);
+    data.contacts.forEach((c) => state.cache.set(c.id, c));
+    const sig = JSON.stringify(data.contacts);
+    if (sig === state.sig.contacts) return; // nothing changed: leave the table (and your place in it) alone
+    state.sig.contacts = sig;
     renderTable();
   }
   function renderTable() {
@@ -525,16 +550,58 @@
 
   // ---------- contact record ----------
   async function openContact(id) {
-    const { contact } = await api(`/api/contacts/${id}`);
-    state.current = contact;
+    const rec = $('page-record');
+    renderRecNav(id);
+    // Show what we already know straight away (no flash of the previous lead), then fill in the fresh copy.
+    const cached = state.cache.get(id);
+    if (cached) { state.current = cached; fillContact(); setTab(cached.unread ? 'texts' : 'activity'); }
+    if (!cached) { state.current = null; rec.classList.add('is-loading'); $('cName').textContent = 'Loading…'; $('cSub').textContent = ''; }
+    state.sig.timeline = '';
+    let contact;
+    try { ({ contact } = await api(`/api/contacts/${id}`)); } finally { rec.classList.remove('is-loading'); }
+    if (location.hash !== '#c/' + id) return; // moved on to another lead while this one loaded
+    const wasCached = state.current && state.current.id === id;
+    state.current = contact; state.cache.set(id, contact);
     fillContact();
-    setTab(contact.unread ? 'texts' : 'activity');
+    if (!wasCached) setTab(contact.unread ? 'texts' : 'activity');
     await Promise.all([loadTimeline(true), loadContactTasks()]);
-    if (contact.unread) { await api(`/api/contacts/${id}/read`, { method: 'POST', body: {} }); poll(); }
+    if (contact.unread) { await api(`/api/contacts/${id}/read`, { method: 'POST', body: {} }); contact.unread = 0; poll(); }
+    prefetchNeighbours(id);
   }
+  // ---- Prev / Next through the list a lead was opened from ----
+  function renderRecNav(id) {
+    const i = state.navIds.indexOf(id);
+    $('recNav').hidden = i < 0;
+    $('backBtn').href = '#' + state.navFrom;
+    $('backBtn').innerHTML = '&#8592; ' + esc({ pipeline: 'Pipeline', tasks: 'Tasks', home: 'Home' }[state.navFrom] || 'Contacts');
+    if (i < 0) return;
+    $('recPos').textContent = `${i + 1} of ${state.navIds.length}`;
+    $('recPrev').disabled = i === 0; $('recNext').disabled = i === state.navIds.length - 1;
+  }
+  function stepLead(dir) {
+    if (state.page !== 'record' || !state.current) return;
+    const i = state.navIds.indexOf(state.current.id);
+    const next = state.navIds[i + dir];
+    if (i >= 0 && next) goContact(next);
+  }
+  function prefetchNeighbours(id) {
+    const i = state.navIds.indexOf(id); if (i < 0) return;
+    [state.navIds[i + 1], state.navIds[i - 1]].filter((n) => n && !state.cache.has(n)).forEach((n) => {
+      api(`/api/contacts/${n}`).then(({ contact }) => state.cache.set(n, contact)).catch(() => {});
+    });
+  }
+  $('recPrev').addEventListener('click', () => stepLead(-1));
+  $('recNext').addEventListener('click', () => stepLead(1));
+  document.addEventListener('keydown', (e) => {
+    if (state.page !== 'record' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest('input, textarea, select, [contenteditable], dialog')) return;
+    if (e.key === 'j' || e.key === 'J') stepLead(1);
+    if (e.key === 'k' || e.key === 'K') stepLead(-1);
+  });
 
   function fillContact() {
     const c = state.current;
+    state.cache.set(c.id, c);
     $('rAvatar').outerHTML = avatar(c, 'lg').replace('<span ', '<span id="rAvatar" ');
     $('cName').textContent = displayName(c);
     $('cSub').textContent = subline(c);
@@ -618,6 +685,10 @@
     const id = state.current.id;
     const { items } = await api(`/api/contacts/${id}/timeline`);
     if (!state.current || state.current.id !== id) return;
+    // Polls redraw only when something new came in, so a playing call recording or a half-read thread isn't reset.
+    const sig = id + ':' + JSON.stringify(items);
+    if (sig === state.sig.timeline) return;
+    state.sig.timeline = sig;
     // Texts tab: SMS conversation only.
     const tl = $('timeline');
     const atBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
@@ -653,7 +724,7 @@
     $('saveState').textContent = 'Saving…';
     try {
       const { contact } = await api(`/api/contacts/${state.current.id}`, { method: 'PATCH', body: { [key]: value, today: today() } });
-      state.current = contact; fillContact(); $('saveState').textContent = 'Saved';
+      state.current = contact; state.cache.set(contact.id, contact); fillContact(); $('saveState').textContent = 'Saved';
       if (key === 'stage') { loadContactTasks(); toast(`Moved to ${contact.stage}`); }
     } catch (err) { $('saveState').textContent = ''; toast(err.message); fillContact(); }
   }
@@ -662,8 +733,10 @@
   $('deleteBtn').addEventListener('click', async () => {
     if (!state.current) return;
     if (!window.confirm(`Delete ${displayName(state.current)} and all their texts, calls and notes?`)) return;
-    await api(`/api/contacts/${state.current.id}`, { method: 'DELETE', body: {} });
-    state.current = null; location.hash = 'contacts';
+    const gone = state.current.id;
+    await api(`/api/contacts/${gone}`, { method: 'DELETE', body: {} });
+    state.cache.delete(gone); state.navIds = state.navIds.filter((x) => x !== gone);
+    state.current = null; location.hash = state.navFrom || 'contacts';
   });
 
   // ---------- opt-in + texting ----------
@@ -851,15 +924,16 @@
     } catch (err) { toast(err.message); }
   }
 
-  // ---------- CSV import ----------
-  function parseCsv(text) {
+  // ---------- import: paste from a Google Sheet, or a CSV file ----------
+  // Google Sheets copies cells as tab-separated text (cells with line breaks come quoted); CSV uses commas.
+  function parseDelimited(text, sep) {
     const rows = []; let row = [], cell = '', q = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       if (q) {
         if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch;
-      } else if (ch === '"') q = true;
-      else if (ch === ',') { row.push(cell); cell = ''; }
+      } else if (ch === '"' && cell === '') q = true;
+      else if (ch === sep) { row.push(cell); cell = ''; }
       else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
       else cell += ch;
     }
@@ -867,31 +941,104 @@
     return rows.filter((r) => r.some((c) => c.trim()));
   }
   const headerAliases = {
-    phone: ['phone', 'phone number', 'mobile', 'number', 'cell'], name: ['name', 'owner', 'contact', 'contact name', 'first name'],
-    business: ['business', 'business name', 'company', 'company name'], email: ['email', 'e-mail'], website: ['website', 'site', 'url'],
-    instagram: ['instagram', 'ig', 'instagram handle', 'handle', 'instagram url'], stage: ['stage', 'status'], notes: ['notes', 'note'],
-    value: ['value', 'deal value', 'price', 'amount'], source: ['source', 'lead source', 'found on', 'found via'],
+    phone: ['phone', 'phone number', 'phone #', 'mobile', 'number', 'cell', 'telephone'],
+    name: ['name', 'owner', 'owner name', 'contact', 'contact name', 'first name', 'full name'],
+    business: ['business', 'business name', 'company', 'company name', 'account'], email: ['email', 'e-mail', 'email address'],
+    website: ['website', 'site', 'url', 'web'], instagram: ['instagram', 'ig', 'instagram handle', 'handle', 'instagram url'],
+    stage: ['stage', 'status'], notes: ['notes', 'note', 'comments'], value: ['value', 'deal value', 'price', 'amount'],
+    source: ['source', 'lead source', 'found on', 'found via'],
+    first_contact: ['first contact', 'first contact date', 'first contacted', 'date contacted', 'contacted', 'first touch', 'contact date', 'date'],
   };
-  $('importBtn').addEventListener('click', () => { $('importForm').reset(); $('importResult').textContent = ''; $('importDialog').showModal(); });
-  $('importForm').addEventListener('submit', async (e) => {
-    if (e.submitter && e.submitter.value === 'cancel') return;
-    e.preventDefault();
-    const file = $('importFile').files[0];
-    if (!file) { $('importResult').textContent = 'Pick a file first.'; return; }
-    const rows = parseCsv(await file.text());
-    const head = rows.shift().map((h) => h.trim().toLowerCase());
+  // Order used when the paste has no header row (matches Sai's outreach sheet).
+  const DEFAULT_COLS = ['business', 'name', 'phone', 'email', 'website', 'source', 'first_contact', 'notes'];
+  const imp = { rows: [], checked: [] };
+  function rowsFromText(text) {
+    const grid = parseDelimited(text.replace(/^﻿/, ''), text.includes('\t') ? '\t' : ',');
+    if (!grid.length) return [];
+    const head = grid[0].map((h) => h.trim().toLowerCase().replace(/[:*]+$/, '').trim());
     const idx = {};
     for (const [key, names] of Object.entries(headerAliases)) {
-      const i = head.findIndex((h) => names.includes(h)); if (i >= 0) idx[key] = i;
+      const i = head.findIndex((h, j) => names.includes(h) && !Object.values(idx).includes(j)); if (i >= 0) idx[key] = i;
     }
-    if (idx.phone === undefined && idx.instagram === undefined && idx.email === undefined) { $('importResult').textContent = 'No phone, Instagram or email column found.'; return; }
-    const list = rows.map((r) => Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, (r[i] || '').trim()]))).filter((r) => r.phone || r.instagram || r.email);
-    try {
-      const res = await api('/api/import', { method: 'POST', body: { rows: list } });
-      $('importResult').textContent = `Added ${res.added}. Skipped ${res.skipped} (duplicates or numbers it could not read).`;
-      route();
-    } catch (err) { $('importResult').textContent = err.message; }
+    let body = grid;
+    if (Object.keys(idx).length >= 2) body = grid.slice(1);
+    else { DEFAULT_COLS.forEach((k, i) => { idx[k] = i; }); }
+    return body.map((r) => Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, (r[i] || '').trim()])));
+  }
+  function resetImportPreview() {
+    imp.rows = []; imp.checked = [];
+    $('impPreview').hidden = true; $('importGo').disabled = true; $('importGo').textContent = 'Add leads';
+  }
+  $('importBtn').addEventListener('click', () => {
+    $('importForm').reset(); $('importResult').textContent = ''; resetImportPreview();
+    if (!$('impStage').options.length) $('impStage').innerHTML = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
+    $('impStage').value = state.me.stages[0];
+    $('importDialog').showModal(); $('impText').focus();
   });
+  $('impText').addEventListener('input', resetImportPreview);
+  $('impStage').addEventListener('change', () => { if (!$('impPreview').hidden) checkImport(); });
+  $('importFile').addEventListener('change', async () => {
+    const file = $('importFile').files[0]; if (!file) return;
+    $('impText').value = await file.text(); resetImportPreview(); checkImport();
+  });
+  async function checkImport() {
+    $('importResult').textContent = '';
+    const rows = rowsFromText($('impText').value);
+    if (!rows.length) { $('importResult').textContent = 'Paste some rows first.'; return; }
+    $('impCheck').disabled = true; $('importResult').textContent = 'Checking…';
+    try {
+      const res = await api('/api/import', { method: 'POST', body: { rows, preview: true, stage: $('impStage').value } });
+      imp.rows = rows; imp.checked = res.rows; $('importResult').textContent = '';
+      renderImportPreview();
+    } catch (err) { $('importResult').textContent = err.message; }
+    finally { $('impCheck').disabled = false; }
+  }
+  function renderImportPreview() {
+    const n = { new: 0, duplicate: 0, error: 0 };
+    imp.checked.forEach((r) => { n[r.status]++; });
+    $('impSum').innerHTML = `<span class="imp-st new">${n.new} new</span><span class="imp-st duplicate">${n.duplicate} already in CRM or repeated</span>`
+      + (n.error ? `<span class="imp-st error">${n.error} can't be read</span>` : '');
+    $('impRows').innerHTML = imp.checked.map((r, i) => `<tr class="${r.status === 'new' ? '' : 'is-skip'}">
+        <td>${r.status === 'new' ? `<input type="checkbox" data-imp="${i}" ${r.skip ? '' : 'checked'} aria-label="Add row ${r.line}">` : ''}</td>
+        <td class="muted">${r.line}</td>
+        <td>${esc(r.name || '-')}</td>
+        <td class="hide-s">${esc(fmtPhone(r.phone)) || '<span class="muted">-</span>'}</td>
+        <td class="hide-s">${esc(r.source || '-')}</td>
+        <td><span class="imp-st ${r.status}">${r.status === 'new' ? 'New' : r.status === 'duplicate' ? 'Duplicate' : 'Problem'}</span>
+          ${r.reason ? `<div class="muted small">${r.match && r.match.id ? `<a href="#c/${r.match.id}" data-impgo>${esc(r.reason)}</a>` : esc(r.reason)}</div>` : ''}</td>
+      </tr>`).join('');
+    $('impPreview').hidden = false;
+    updateImportButton();
+  }
+  function updateImportButton() {
+    const k = imp.checked.filter((r) => r.status === 'new' && !r.skip).length;
+    $('importGo').disabled = !k;
+    $('importGo').textContent = k ? `Add ${k} lead${k === 1 ? '' : 's'}` : 'Nothing new to add';
+    $('impAll').checked = k > 0 && k === imp.checked.filter((r) => r.status === 'new').length;
+  }
+  $('impRows').addEventListener('change', (e) => {
+    const b = e.target.closest('[data-imp]'); if (!b) return;
+    imp.checked[Number(b.dataset.imp)].skip = !b.checked; updateImportButton();
+  });
+  $('impRows').addEventListener('click', (e) => { if (e.target.closest('[data-impgo]')) $('importDialog').close(); });
+  $('impAll').addEventListener('change', (e) => {
+    imp.checked.forEach((r) => { if (r.status === 'new') r.skip = !e.target.checked; });
+    renderImportPreview();
+  });
+  $('impCheck').addEventListener('click', checkImport);
+  $('importGo').addEventListener('click', async () => {
+    const pick = imp.checked.map((r, i) => (r.status === 'new' && !r.skip ? imp.rows[i] : null)).filter(Boolean);
+    if (!pick.length) return;
+    $('importGo').disabled = true; $('importResult').textContent = 'Adding…';
+    try {
+      const res = await api('/api/import', { method: 'POST', body: { rows: pick, stage: $('impStage').value } });
+      $('importResult').textContent = `Added ${res.added} lead${res.added === 1 ? '' : 's'}${res.skipped ? `, skipped ${res.skipped}` : ''}.`;
+      $('impText').value = ''; resetImportPreview();
+      toast(`Added ${res.added} lead${res.added === 1 ? '' : 's'}`);
+      route();
+    } catch (err) { $('importResult').textContent = err.message; $('importGo').disabled = false; }
+  });
+  $('importForm').addEventListener('submit', (e) => { if (!(e.submitter && e.submitter.value === 'cancel')) e.preventDefault(); });
 
   // ---------- calling (Twilio Voice JS SDK) ----------
   function setPhoneStatus(kind, title) {

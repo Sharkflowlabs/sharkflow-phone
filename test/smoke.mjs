@@ -110,3 +110,27 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
 { const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400,'assistant asks for a screenshot or text'); }
+{ // Paste-from-sheet import: preview saves nothing, flags duplicates (CRM + same paste) and bad rows, then adds only new rows.
+  const rows=[
+    {business:'Peachtree Pest Pros',name:'Dana',phone:'(404) 555-0101',email:'dana@peachpest.com',source:'ZoomInfo',first_contact:'11/20/2026',notes:'Emailed'},
+    {business:'Mike Roofing',phone:'404-555-0102'},
+    {business:'Peachtree Pest Pros',phone:'404-555-0109'},
+    {business:'Bad Number Co',phone:'12'},
+    {business:'Odd Date LLC',first_contact:'someday'},
+    {name:'Instagram Only',instagram:'https://instagram.com/igonly_biz/',source:'instagram'},
+  ];
+  const before=(await api('/api/contacts')).data.contacts.length;
+  const p=await api('/api/import',{method:'POST',body:{rows,preview:true,stage:'Connected'}});
+  ok(p.status===200 && p.data.rows.map(r=>r.status).join()==='new,duplicate,duplicate,error,error,new','import preview statuses');
+  ok(p.data.rows[1].match && p.data.rows[1].match.id && /already in CRM/.test(p.data.rows[1].reason),'preview links the existing CRM contact');
+  ok(/row 1/.test(p.data.rows[2].reason),'preview catches repeats inside the paste');
+  ok(p.data.rows[0].source==='ZoomInfo' && p.data.rows[5].source==='Instagram','ZoomInfo + case-insensitive sources kept');
+  ok((await api('/api/contacts')).data.contacts.length===before,'preview saves nothing');
+  const r=await api('/api/import',{method:'POST',body:{rows,stage:'Connected'}});
+  ok(r.data.added===2 && r.data.skipped===4,'import adds only new rows ('+JSON.stringify([r.data.added,r.data.skipped])+')');
+  const all=(await api('/api/contacts?q=Peachtree')).data.contacts; const c=all[0];
+  ok(all.length===1 && c.phone==='+14045550101' && c.stage==='Connected' && c.last_touch==='2026-11-20' && c.notes.startsWith('First contact 2026-11-20') && c.source==='ZoomInfo','imported row saved correctly');
+  ok((await api('/api/contacts?q=igonly_biz')).data.contacts[0].instagram==='igonly_biz','instagram url cleaned');
+  const again=await api('/api/import',{method:'POST',body:{rows,preview:true}}); ok(again.data.rows.filter(x=>x.status==='new').length===0,'re-pasting the same rows finds nothing new');
+  ok((await api('/api/import',{method:'POST',body:{rows:[]}})).status===400,'empty import rejected');
+}

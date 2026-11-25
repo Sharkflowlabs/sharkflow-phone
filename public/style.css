@@ -589,3 +589,25 @@ button.kpi:hover { border-color: var(--line-2); border-top-color: var(--c); }
 .d-tools { background: none; }
 .dcard:hover .d-tools, .dcard:focus-within .d-tools, .dcard.is-sel .d-tools, .board.selecting .d-tools { background: var(--panel-2); }
 .next-task { white-space: nowrap; }
+
+/* Paste-from-sheet import */
+dialog.wide { width: min(820px, calc(100% - 32px)); }
+#impText { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre; overflow: auto; }
+.imp-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.imp-opts input[type="file"] { padding: 6px; }
+.imp-sum { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.imp-table { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.imp-table th, .imp-table td { padding: 6px 10px; font-size: 13px; }
+.imp-table td input, .imp-table th input { width: auto; }
+.imp-table tr.is-skip td { color: var(--muted); }
+.imp-st { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.imp-st.new { background: var(--good-bg); color: var(--good); }
+.imp-st.duplicate { background: var(--warn-bg); color: var(--warn); }
+.imp-st.error { background: var(--bad-bg); color: var(--bad); }
+@media (max-width: 600px) { .imp-opts { grid-template-columns: 1fr; } }
+
+/* Prev / Next on a contact record */
+.crumbs { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.rec-nav { display: inline-flex; align-items: center; gap: 6px; }
+.rec-nav .btn:disabled { opacity: .4; cursor: default; }
+.record.is-loading .record-grid { opacity: .55; transition: opacity .15s; }

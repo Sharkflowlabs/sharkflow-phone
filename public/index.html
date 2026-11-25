@@ -33,7 +33,7 @@
       <a class="nav sub" data-page="tasks" href="#tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/></svg><span>Tasks</span><i id="tasksCount" class="badge"></i></a>
       <div class="rail-foot">
         <span id="phoneStatus" class="dot" title="Calling off"></span>
-        <button class="nav small" id="importBtn" title="Import CSV"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span>Import</span></button>
+        <button class="nav small" id="importBtn" title="Add leads from a sheet or CSV"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span>Import</span></button>
         <button class="nav small" id="logoutBtn" title="Sign out"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Sign out</span></button>
       </div>
     </nav>
@@ -264,7 +264,10 @@
 
       <!-- RECORD -->
       <section id="page-record" class="page record" hidden>
-        <div class="crumbs"><a href="#contacts" id="backBtn">&#8592; Contacts</a></div>
+        <div class="crumbs"><a href="#contacts" id="backBtn">&#8592; Contacts</a>
+          <span class="rec-nav" id="recNav" hidden><span class="muted" id="recPos"></span>
+            <button type="button" class="btn small" id="recPrev" title="Previous lead (K)" aria-label="Previous lead">&#8249; Prev</button>
+            <button type="button" class="btn small" id="recNext" title="Next lead (J)" aria-label="Next lead">Next &#8250;</button></span></div>
         <div class="record-grid">
           <aside class="card rec-left">
             <div class="rec-id">
@@ -445,13 +448,29 @@
     </form>
   </dialog>
 
-  <dialog id="importDialog">
+  <dialog id="importDialog" class="wide">
     <form method="dialog" id="importForm" class="dialog-form">
-      <h2>Import contacts</h2>
-      <p class="muted">Pick a CSV with a header row. Columns it understands: phone, name, business, email, website, instagram, stage, value, notes. Each row needs a phone, Instagram or email.</p>
-      <input type="file" id="importFile" accept=".csv,text/csv">
+      <h2>Add leads from a sheet</h2>
+      <p class="muted">In Google Sheets, select the rows (with the header row if you have one), copy, and paste here. Nothing is saved until you check the preview and press Add.</p>
+      <textarea id="impText" rows="7" spellcheck="false" placeholder="Business&#9;Owner&#9;Phone&#9;Email&#9;Website&#9;Source&#9;First contact&#9;Notes"></textarea>
+      <p class="muted small">No header row? Columns are read in this order: Business, Owner, Phone, Email, Website, Source, First contact, Notes. With a header it also understands Instagram, Stage and Amount.</p>
+      <div class="imp-opts">
+        <label>Stage for these leads<select id="impStage"></select></label>
+        <label>Or load a CSV file<input type="file" id="importFile" accept=".csv,text/csv,.tsv,text/tab-separated-values"></label>
+      </div>
+      <div id="impPreview" hidden>
+        <div class="imp-sum" id="impSum"></div>
+        <div class="imp-table"><table class="ctable">
+          <thead><tr><th><input type="checkbox" id="impAll" checked aria-label="Select all new rows"></th><th>Row</th><th>Business / name</th><th class="hide-s">Phone</th><th class="hide-s">Source</th><th>Check</th></tr></thead>
+          <tbody id="impRows"></tbody>
+        </table></div>
+      </div>
       <p id="importResult" class="muted"></p>
-      <div class="row end"><button class="btn" value="cancel">Close</button><button class="btn primary" value="ok" id="importGo">Import</button></div>
+      <div class="row end">
+        <button class="btn" value="cancel" formnovalidate>Close</button>
+        <button class="btn" type="button" id="impCheck">Check rows</button>
+        <button class="btn primary" type="button" id="importGo" disabled>Add leads</button>
+      </div>
     </form>
   </dialog>
 
