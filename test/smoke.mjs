@@ -28,7 +28,7 @@ ok((await api(`/api/contacts/${id}/messages`,{method:'POST',body:{body:'hi'}})).
 ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{opt_in_at:'2026-11-22'}})).status===400,'opt-in needs channel');
 ok((await api(`/api/contacts/${id}`,{method:'PATCH',body:{opt_in_at:'2026-11-22',opt_in_channel:'Instagram DM',opt_in_note:'said yes to demo link'}})).data.contact.opt_in_channel==='Instagram DM','opt-in saved');
 const send=await api(`/api/contacts/${id}/messages`,{method:'POST',body:{body:'Here is your mockup'}}); ok(send.status===502,'send with fake creds fails cleanly ('+send.data.error+')');
-tl=await api(`/api/contacts/${id}/timeline`); const f=tl.data.items.find(i=>i.status==='failed'); ok(f && f.body.includes('Reply STOP to opt out.'),'first text gets opt-out line');
+tl=await api(`/api/contacts/${id}/timeline`); const f=tl.data.items.find(i=>i.status==='failed'); ok(f && f.body.includes('msg & data rates may apply') && f.body.includes('STOP to opt out'),'first text is preceded by the opt-in confirmation');
 await tw('/twilio/sms',{From:'+15552013344',Body:' stop ',MessageSid:'SM3'});
 ok((await api(`/api/contacts/${id}`)).data.contact.opted_out===1,'STOP opts out');
 ok((await api(`/api/contacts/${id}/messages`,{method:'POST',body:{body:'hello?'}})).status===409,'sending blocked after STOP');

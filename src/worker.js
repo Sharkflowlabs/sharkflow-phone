@@ -202,6 +202,7 @@ async function handleApi(request, env, url) {
       callingReady: Boolean(env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET && env.TWILIO_TWIML_APP_SID),
       textingReady: Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_NUMBER),
       optOutLine: optOutLine(env),
+      optInConfirm: optInConfirmText(env),
       staleDays: STALE_DAYS,
       lostReasons: LOST_REASONS,
       maxTouches: MAX_TOUCHES,
@@ -603,45 +604,14 @@ async function handleApi(request, env, url) {
     let text = String(body || '').trim();
     if (!text) throw new HttpError(400, 'Message is empty');
     const sentBefore = await db.prepare("SELECT 1 FROM messages WHERE contact_id = ? AND direction = 'out' AND status NOT IN ('failed','undelivered') LIMIT 1").bind(id).first();
-    // The first text to anyone always carries the opt-out line; later ones only when asked.
-    const line = optOutLine(env);
-    if ((!sentBefore || addOptOut) && !/\bSTOP\b/i.test(text)) text = `${text}\n\n${line}`;
+    // Later texts carry the opt-out line only when asked.
+    if (addOptOut && !/\bSTOP\b/i.test(text)) text = `${text}\n\n${optOutLine(env)}`;
     if (text.length > 1600) throw new HttpError(400, 'Message is too long (1600 characters max)');
-
-    const form = new URLSearchParams({
-      To: contact.phone,
-      From: env.TWILIO_NUMBER,
-      Body: text,
-      StatusCallback: `${url.origin}/twilio/sms-status`,
-    });
-    const ts = nowIso();
-    let res;
-    try {
-      res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
-        method: 'POST',
-        headers: { authorization: twilioAuthHeader(env), 'content-type': 'application/x-www-form-urlencoded' },
-        body: form,
-      });
-    } catch (e) {
-      await db.prepare("INSERT INTO messages (contact_id, direction, body, status, error, created_at) VALUES (?, 'out', ?, 'failed', ?, ?)")
-        .bind(id, text, 'Could not reach Twilio', ts).run();
-      throw new HttpError(502, 'Could not reach Twilio. Try again.');
-    }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      if (data.code === 21610) {
-        await db.prepare('UPDATE contacts SET opted_out = 1 WHERE id = ?').bind(id).run();
-        throw new HttpError(409, 'This number has opted out (texted STOP). Message not sent.');
-      }
-      await db.prepare("INSERT INTO messages (contact_id, direction, body, status, error, created_at) VALUES (?, 'out', ?, 'failed', ?, ?)")
-        .bind(id, text, `${data.code || res.status}: ${data.message || 'Twilio error'}`, ts).run();
-      throw new HttpError(502, `Twilio refused the message: ${data.message || res.status}`);
-    }
-    await db.batch([
-      db.prepare("INSERT INTO messages (contact_id, direction, body, twilio_sid, status, created_at) VALUES (?, 'out', ?, ?, ?, ?)")
-        .bind(id, text, data.sid, data.status || 'queued', ts),
-      db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(ts, id),
-    ]);
+    // The first text to anyone is preceded by an opt-in confirmation carrying the required disclosures
+    // (who we are, frequency, msg & data rates, HELP/STOP), as registered with carriers for verbal opt-ins.
+    if (!sentBefore) await sendSms(env, db, url, contact, optInConfirmText(env));
+    const data = await sendSms(env, db, url, contact, text);
+    await db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(nowIso(), id).run();
     return json({ ok: true, sid: data.sid });
   }
 
@@ -674,6 +644,47 @@ function dialRecordAttrs(env, origin) {
   return recordingOn(env)
     ? ` record="record-from-answer-dual" recordingStatusCallback="${origin}/twilio/recording" recordingStatusCallbackEvent="completed"`
     : '';
+}
+
+// Send one text through Twilio and log it. Throws HttpError on failure (and logs failed sends).
+async function sendSms(env, db, url, contact, text) {
+  const id = contact.id;
+  const form = new URLSearchParams({
+    To: contact.phone,
+    From: env.TWILIO_NUMBER,
+    Body: text,
+    StatusCallback: `${url.origin}/twilio/sms-status`,
+  });
+  const ts = nowIso();
+  let res;
+  try {
+    res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+      method: 'POST',
+      headers: { authorization: twilioAuthHeader(env), 'content-type': 'application/x-www-form-urlencoded' },
+      body: form,
+    });
+  } catch (e) {
+    await db.prepare("INSERT INTO messages (contact_id, direction, body, status, error, created_at) VALUES (?, 'out', ?, 'failed', ?, ?)")
+      .bind(id, text, 'Could not reach Twilio', ts).run();
+    throw new HttpError(502, 'Could not reach Twilio. Try again.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (data.code === 21610) {
+      await db.prepare('UPDATE contacts SET opted_out = 1 WHERE id = ?').bind(id).run();
+      throw new HttpError(409, 'This number has opted out (texted STOP). Message not sent.');
+    }
+    await db.prepare("INSERT INTO messages (contact_id, direction, body, status, error, created_at) VALUES (?, 'out', ?, 'failed', ?, ?)")
+      .bind(id, text, `${data.code || res.status}: ${data.message || 'Twilio error'}`, ts).run();
+    throw new HttpError(502, `Twilio refused the message: ${data.message || res.status}`);
+  }
+  await db.prepare("INSERT INTO messages (contact_id, direction, body, twilio_sid, status, created_at) VALUES (?, 'out', ?, ?, ?, ?)")
+    .bind(id, text, data.sid, data.status || 'queued', ts).run();
+  return data;
+}
+
+function optInConfirmText(env) {
+  return env.OPT_IN_CONFIRM || 'Sharkflow Labs: Thanks for agreeing to texts about your website demo. Msg frequency varies, msg & data rates may apply. Reply HELP for help, STOP to opt out.';
 }
 
 function optOutLine(env) {
