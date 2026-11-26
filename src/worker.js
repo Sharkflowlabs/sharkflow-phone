@@ -935,6 +935,8 @@ async function checkImportRows(db, rows, defaultStage) {
     remember(c, { line: i + 1, name: out.name });
     return { ...out, status: 'new', insert: c };
   });
+}
+
 // ---------- CRM assistant: drafts for one contact ----------
 const DRAFT_CHANNELS = { email: 'email', text: 'text message (SMS)', dm: 'Instagram DM' };
 const DRAFT_SCHEMA = {
