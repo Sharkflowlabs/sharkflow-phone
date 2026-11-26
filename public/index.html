@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#0b1220">
+  <meta name="theme-color" content="#f4f1ea">
   <link rel="icon" href="/logo-icon.svg" type="image/svg+xml">
   <title>Sharkflow CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -27,13 +27,13 @@
     <nav class="rail" aria-label="Main">
       <a class="rail-brand" href="#home" aria-label="Home"><span class="fin"></span></a>
       <a class="nav" data-page="home" href="#home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span><i id="homeCount" class="badge"></i></a>
+      <a class="nav" data-page="prospects" href="#prospects"><svg viewBox="0 0 24 24"><path d="M3 4h18v16H3zM3 9h18M3 14h18M9 4v16"/></svg><span>Prospects</span><i id="inboxCount" class="badge"></i></a>
+      <a class="nav" data-page="deals" href="#deals"><svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z"/></svg><span>Deals</span></a>
       <a class="nav" data-page="dialer" href="#dialer"><svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.2 15.2 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.6a1 1 0 0 1-.25 1z"/></svg><span>Dialer</span></a>
-      <a class="nav" data-page="pipeline" href="#pipeline"><svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z"/></svg><span>Pipeline</span></a>
-      <a class="nav" data-page="contacts" href="#contacts"><svg viewBox="0 0 24 24"><path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.7 0-6 1.3-6 3.5V19h6v-2.5c0-1.2.5-2.3 1.4-3.2A9 9 0 0 0 8 13zm8 0c-3 0-7 1.5-7 4v2h14v-2c0-2.5-4-4-7-4z"/></svg><span>Contacts</span><i id="inboxCount" class="badge"></i></a>
-      <a class="nav sub" data-page="tasks" href="#tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/></svg><span>Tasks</span><i id="tasksCount" class="badge"></i></a>
+      <a class="nav" data-page="tasks" href="#tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/></svg><span>Tasks</span><i id="tasksCount" class="badge"></i></a>
       <div class="rail-foot">
         <span id="phoneStatus" class="dot" title="Calling off"></span>
-        <button class="nav small" id="importBtn" title="Import CSV"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span>Import</span></button>
+        <button class="nav small" id="importBtn" title="Paste a list from a sheet or CSV"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span>Import</span></button>
         <button class="nav small" id="logoutBtn" title="Sign out"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Sign out</span></button>
       </div>
     </nav>
@@ -43,7 +43,7 @@
       <section id="page-home" class="page" hidden>
         <header class="page-head">
           <div><h1 id="hello">Today</h1><p class="muted" id="helloSub"></p></div>
-          <div class="head-actions"><a class="btn gold" href="#dialer">Start calling</a><button class="btn" data-new>+ Contact</button></div>
+          <div class="head-actions"><a class="btn" href="#dialer">Start calling</a><button class="btn primary" data-new>+ Prospect</button></div>
         </header>
         <div class="kpis" id="kpis"></div>
         <div class="funnel card" id="funnel"></div>
@@ -86,11 +86,12 @@
             <div class="card-head"><h2>Queue</h2><span class="muted" id="queueCount"></span></div>
             <select id="queueFilter" aria-label="Which list to call">
               <option value="tasks">Tasks due</option>
-              <option value="Attempt to connect">Attempt to connect</option>
-              <option value="Prospects">Prospects</option>
-              <option value="Connected">Connected</option>
+              <option value="New">New</option>
+              <option value="Messaged">Messaged</option>
+              <option value="Replied">Replied</option>
+              <option value="No reply">No reply</option>
               <option value="Interested">Interested</option>
-              <option value="LTO">LTO</option>
+              <option value="Demo">Demo</option>
               <option value="all">Everyone with a phone</option>
             </select>
             <ol id="queueList" class="queue-list"></ol>
@@ -174,14 +175,13 @@
         </section>
       </section>
 
-      <!-- PIPELINE -->
-      <section id="page-pipeline" class="page board-page" hidden>
+      <!-- DEALS -->
+      <section id="page-deals" class="page board-page" hidden>
         <header class="page-head">
-          <div><h1>Pipeline</h1><p class="muted" id="boardSub"></p></div>
+          <div><h1>Deals</h1><p class="muted" id="boardSub"></p></div>
           <div class="head-actions">
             <input id="boardSearch" type="search" placeholder="Search deals">
-            <label class="check"><input type="checkbox" id="showLost"> Show Lost</label>
-            <button class="btn" data-new>+ Deal</button>
+            <button class="btn primary" data-new="deal">+ Deal</button>
           </div>
         </header>
         <div class="selbar" id="selBar" hidden>
@@ -194,41 +194,44 @@
         <div class="board" id="boardCols"></div>
       </section>
 
-      <!-- CONTACTS -->
-      <section id="page-contacts" class="page" hidden>
+      <!-- PROSPECTS: one spreadsheet of everyone being worked before they become a deal -->
+      <section id="page-prospects" class="page sheet-page" hidden>
         <header class="page-head">
-          <div><h1>Contacts</h1><p class="muted" id="contactsSub"></p></div>
-          <nav class="subnav" aria-label="Contacts sections"><a href="#contacts" class="active">Contacts</a><a href="#tasks">Tasks <span class="pill-n" data-tasks-n></span></a></nav>
-          <div class="head-actions"><button class="btn primary" data-new>+ Contact</button></div>
+          <div><h1>Prospects</h1><p class="muted" id="contactsSub"></p></div>
+          <div class="head-actions"><button class="btn" id="pasteListBtn">Paste a list</button><button class="btn primary" data-new>+ Prospect</button></div>
         </header>
+        <form id="quickAdd" class="quick-add card" autocomplete="off">
+          <span class="qa-label">Quick add</span>
+          <input name="business" placeholder="Business" aria-label="Business">
+          <input name="name" placeholder="Owner" aria-label="Owner">
+          <input name="phone" type="tel" placeholder="Phone / WhatsApp" aria-label="Phone">
+          <select name="channel" id="qaChannel" aria-label="Channel"></select>
+          <input name="notes" placeholder="Note (optional)" aria-label="Note">
+          <button class="btn primary" type="submit">Add</button>
+        </form>
         <div class="table-card card">
           <div class="table-tools">
-            <div class="views" role="tablist">
-              <button data-view="" class="tab active">All</button>
-              <button data-view="unread" class="tab">Unread <span id="unreadCount" class="count"></span></button>
-              <button data-view="due" class="tab">Tasks due <span id="dueCount" class="count"></span></button>
-              <button data-view="hot" class="tab">Hot</button>
-            </div>
+            <div class="chips" id="statusChips" role="tablist" aria-label="Filter by status"></div>
             <div class="filters">
-              <input id="search" type="search" placeholder="Search name, business, number, Instagram">
-              <select id="stageFilter" aria-label="Filter by stage"><option value="">All stages</option></select>
+              <input id="search" type="search" placeholder="Search name, business, number, notes">
+              <select id="channelFilter" aria-label="Filter by channel"><option value="">All channels</option></select>
               <select id="sourceFilter" aria-label="Filter by lead source"><option value="">All sources</option></select>
             </div>
           </div>
-          <div class="table-wrap">
-            <table class="ctable">
-              <thead><tr><th>Name</th><th>Stage</th><th class="hide-s">Source</th><th class="num hide-s">Amount</th><th class="hide-s">Phone</th><th>Next task</th><th class="hide-s">Last activity</th></tr></thead>
+          <div class="table-wrap sheet-wrap">
+            <table class="sheet">
+              <thead><tr><th class="c-n">#</th><th class="c-biz">Business</th><th>Owner</th><th>Phone</th><th>Channel</th><th>Status</th><th>Source</th><th>Last touch</th><th>Follow-up</th><th class="c-notes">Notes</th><th class="c-act"><span class="sr">Actions</span></th></tr></thead>
               <tbody id="contactRows"></tbody>
             </table>
           </div>
+          <p class="muted small sheet-help">Click a cell to edit it; it saves when you leave the cell. Notes shows the latest line (all notes are on the record). <b>+1</b> logs a message sent (moves New to Messaged). Pick <b>Interested</b> to move a lead to Deals.</p>
         </div>
       </section>
 
-      <!-- TASKS (under Contacts) -->
+      <!-- TASKS -->
       <section id="page-tasks" class="page" hidden>
         <header class="page-head">
           <div><h1>Tasks</h1><p class="muted" id="tasksSub">Every open to-do across your contacts.</p></div>
-          <nav class="subnav" aria-label="Contacts sections"><a href="#contacts">Contacts</a><a href="#tasks" class="active">Tasks <span class="pill-n" data-tasks-n></span></a></nav>
         </header>
         <div class="kpis" id="taskKpis"></div>
         <form id="tkForm" class="card tk-add">
@@ -264,7 +267,10 @@
 
       <!-- RECORD -->
       <section id="page-record" class="page record" hidden>
-        <div class="crumbs"><a href="#contacts" id="backBtn">&#8592; Contacts</a></div>
+        <div class="crumbs"><a href="#prospects" id="backBtn">&#8592; Prospects</a>
+          <span class="rec-nav" id="recNav" hidden><span class="muted" id="recPos"></span>
+            <button type="button" class="btn small" id="recPrev" title="Previous lead (K)" aria-label="Previous lead">&#8249; Prev</button>
+            <button type="button" class="btn small" id="recNext" title="Next lead (J)" aria-label="Next lead">Next &#8250;</button></span></div>
         <div class="record-grid">
           <aside class="card rec-left">
             <div class="rec-id">
@@ -288,6 +294,7 @@
               <label>Website<input id="fWebsite"></label>
               <label>Instagram<input id="fInstagram"></label>
               <label>Lead source<select id="fSource"><option value="">Not set</option></select></label>
+              <label>Channel<select id="fChannel"><option value="">Not set</option></select></label>
               <label>Notes<textarea id="fNotes" rows="4"></textarea></label>
               <div class="optin-record" id="optInRecord" hidden>
                 <span class="muted">Opted in to texts</span>
@@ -332,6 +339,7 @@
                 <textarea id="msgInput" rows="2" placeholder="Write a text…" maxlength="1500"></textarea>
                 <div class="composer-row">
                   <label class="check"><input type="checkbox" id="optOutCheck"> Add “<span id="optOutText"></span>”</label>
+                  <span class="muted" id="optInNote" hidden>First text: an opt-in confirmation (rates, HELP/STOP) is sent just before it.</span>
                   <span id="charCount" class="muted"></span>
                   <button class="btn primary" id="sendBtn" type="submit">Send</button>
                 </div>
@@ -341,9 +349,10 @@
 
           <aside class="rec-right">
             <section class="card deal">
-              <div class="card-head"><h2>Deal</h2><label class="check hot"><input type="checkbox" id="fHot"> Hot</label></div>
+              <div class="card-head"><h2 id="dealHead">Status</h2><label class="check hot"><input type="checkbox" id="fHot"> Hot</label></div>
               <div class="stagebar" id="stageBar"></div>
-              <label>Stage<select id="fStage"></select></label>
+              <label>Status / stage<select id="fStage"></select></label>
+              <button type="button" class="btn primary small" id="toDealsBtn" hidden>Interested: move to Deals</button>
               <label>Amount ($)<input id="fValue" inputmode="numeric" placeholder="e.g. 400"></label>
               <label id="lostWrap">Why lost<select id="fLost"><option value="">Pick one</option></select></label>
               <label id="deadlineWrap">Delivery deadline<input id="fDeadline" type="date"></label>
@@ -428,16 +437,19 @@
 
   <dialog id="newDialog">
     <form method="dialog" id="newForm" class="dialog-form">
-      <h2>New contact</h2>
+      <h2 id="newTitle">New prospect</h2>
       <p class="muted">Fill in at least one way to reach them. A phone is only needed to call or text.</p>
       <label>Business<input name="business"></label>
       <label>Contact name<input name="name"></label>
       <label>Instagram<input name="instagram" placeholder="@handle or link"></label>
       <label>Phone<input name="phone" type="tel" placeholder="(555) 123-4567 or +61…"></label>
       <label>Email<input name="email" type="email"></label>
-      <label>Lead source<select name="source" id="newSource"><option value="">Not set</option></select></label>
       <div class="optin-grid">
-        <label>Stage<select name="stage" id="newStage"></select></label>
+        <label>Lead source<select name="source" id="newSource"><option value="">Not set</option></select></label>
+        <label>Channel<select name="channel" id="newChannel"><option value="">Not set</option></select></label>
+      </div>
+      <div class="optin-grid">
+        <label>Status / stage<select name="stage" id="newStage"></select></label>
         <label>Amount ($)<input name="value" inputmode="numeric"></label>
       </div>
       <p class="error" id="newError"></p>
@@ -445,30 +457,52 @@
     </form>
   </dialog>
 
-  <dialog id="importDialog">
+  <dialog id="importDialog" class="wide">
     <form method="dialog" id="importForm" class="dialog-form">
-      <h2>Import contacts</h2>
-      <p class="muted">Pick a CSV with a header row. Columns it understands: phone, name, business, email, website, instagram, stage, value, notes. Each row needs a phone, Instagram or email.</p>
-      <input type="file" id="importFile" accept=".csv,text/csv">
+      <h2>Paste a list of leads</h2>
+      <p class="muted">In Google Sheets, select the rows (with the header row if you have one), copy, and paste here. Nothing is saved until you check the preview and press Add.</p>
+      <textarea id="impText" rows="7" spellcheck="false" placeholder="Business&#9;Owner&#9;Phone&#9;Email&#9;Website&#9;Source&#9;First contact&#9;Notes"></textarea>
+      <p class="muted small">No header row? Columns are read in this order: Business, Owner, Phone, Email, Website, Source, First contact, Notes. With a header it also understands Instagram, Channel, Status and Amount.</p>
+      <div class="imp-opts">
+        <label>Status for these leads<select id="impStage"></select></label>
+        <label>Or load a CSV file<input type="file" id="importFile" accept=".csv,text/csv,.tsv,text/tab-separated-values"></label>
+      </div>
+      <div id="impPreview" hidden>
+        <div class="imp-sum" id="impSum"></div>
+        <div class="imp-table"><table class="ctable">
+          <thead><tr><th><input type="checkbox" id="impAll" checked aria-label="Select all new rows"></th><th>Row</th><th>Business / name</th><th class="hide-s">Phone</th><th class="hide-s">Source</th><th>Check</th></tr></thead>
+          <tbody id="impRows"></tbody>
+        </table></div>
+      </div>
       <p id="importResult" class="muted"></p>
-      <div class="row end"><button class="btn" value="cancel">Close</button><button class="btn primary" value="ok" id="importGo">Import</button></div>
+      <div class="row end">
+        <button class="btn" value="cancel" formnovalidate>Close</button>
+        <button class="btn" type="button" id="impCheck">Check rows</button>
+        <button class="btn primary" type="button" id="importGo" disabled>Add leads</button>
+      </div>
     </form>
   </dialog>
 
-  <!-- Lead assistant -->
-  <button id="aiFab" class="ai-fab" hidden aria-label="Open lead assistant"><span>✦</span> Add lead with AI</button>
-  <aside id="aiPanel" class="ai-panel" hidden aria-label="Lead assistant">
+  <!-- Assistant: drafts for the open contact, or screenshot -> new lead -->
+  <button id="aiFab" class="ai-fab" hidden aria-label="Open assistant"><span>✦</span> <span id="aiFabLabel">Assistant</span></button>
+  <aside id="aiPanel" class="ai-panel" hidden aria-label="Assistant">
     <header class="ai-head">
-      <div><b>Lead assistant</b><div class="muted small">Drop a screenshot of a Google, Instagram or Facebook page. I'll fill in the prospect for you.</div></div>
+      <div class="grow"><b>Assistant</b><div class="muted small" id="aiSub">Tell me what to write, or drop a screenshot to add a lead.</div></div>
       <button class="icon-x" id="aiClose" aria-label="Close">✕</button>
     </header>
+    <div class="ai-modes" role="tablist" id="aiModes">
+      <button type="button" data-mode="email" class="active">Email</button>
+      <button type="button" data-mode="text">Text</button>
+      <button type="button" data-mode="dm">IG DM</button>
+      <button type="button" data-mode="lead">Add lead</button>
+    </div>
     <ol id="aiLog" class="ai-log"></ol>
     <form id="aiForm" class="ai-form">
       <div id="aiThumbs" class="ai-thumbs"></div>
       <textarea id="aiText" rows="2" placeholder="Attach or paste (Ctrl+V) a screenshot, or paste their details"></textarea>
       <div class="row between">
         <label class="btn small attach">📎 Screenshot<input id="aiFile" type="file" accept="image/*" multiple hidden></label>
-        <button class="btn primary" id="aiSend" type="submit">Read lead</button>
+        <button class="btn primary" id="aiSend" type="submit">Draft</button>
       </div>
     </form>
   </aside>

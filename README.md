@@ -4,14 +4,15 @@ A one-person texting and calling inbox for Sharkflow Labs, on Twilio + Cloudflar
 
 - SMS inbox per contact, sending texts, STOP/START handling, opt-in required before texting
 - Browser calling (Twilio Voice JS SDK), inbound calls ring the browser (and optionally `FORWARD_TO`), voicemail
-- Pipeline stage + next follow-up date per contact, CSV import, password login
+- Pipeline stage + tasks per contact, paste-from-Google-Sheet or CSV import (preview + duplicate check), Prev / Next through leads, password login
 
 Full setup guide (Twilio, Cloudflare, toll-free / 10DLC answers): https://claude.ai/artifact/T3NV7vYKFGdo1urGUP3sZ3
 
 ## Layout
 - `src/worker.js` – API (`/api/*`), Twilio webhooks (`/twilio/*`), serves `public/`
 - `public/` – the UI (plain HTML/CSS/JS; `vendor/twilio.min.js` is the Voice SDK, `npm run vendor` refreshes it)
-- `schema.sql` – database tables (safe to re-run; the deploy workflow runs it)
+- `schema.sql` – base database tables (safe to re-run; the deploy workflow runs it)
+- `migrations/` – later database changes, applied once each by `wrangler d1 migrations apply` (the deploy workflow runs it after `schema.sql`)
 - `.github/workflows/deploy.yml` – deploys on push to `main` (needs `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`)
 
 ## Twilio webhooks (all POST)
@@ -27,7 +28,7 @@ All webhooks check Twilio's signature, so they only work with the real Auth Toke
 ```
 npm ci
 cp .dev.vars.example .dev.vars   # fill in test values
-npm run db:local
+npm run db:local                 # base tables + migrations
 npm run dev                      # http://localhost:8787
 npm test                         # smoke tests against the dev server (fresh local DB, password test-pass, auth token authtoken123)
 ```
