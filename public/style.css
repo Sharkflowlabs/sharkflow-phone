@@ -743,3 +743,11 @@ input, select, textarea { background: var(--panel); }
 .sheet-page .filters select { max-width: 180px; }
 .sheet select.cell { min-width: 124px; }
 @media (max-width: 700px) { .sheet-page .filters input, .sheet-page .filters select { max-width: none; } }
+
+/* Prospects: row checkboxes + bulk delete bar */
+.sheet .c-n { width: 58px; min-width: 58px; }
+.sheet .c-biz { left: 58px; }
+.rownum { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; margin: 0; cursor: pointer; font-size: 11px; color: var(--muted); }
+.rownum input { width: 14px; height: 14px; margin: 0; accent-color: var(--gold); cursor: pointer; }
+.sheet tr.is-sel td { background: color-mix(in srgb, var(--gold) 12%, var(--panel)); }
+.sheet-selbar { margin: 0; border-radius: 0; border-width: 1px 0; padding: 8px 16px; }

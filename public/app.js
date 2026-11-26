@@ -3,7 +3,7 @@
   const $ = (id) => document.getElementById(id);
   const state = {
     me: null, page: 'home', contacts: [], counts: {}, current: null, view: 'prospects', source: '', channel: '', q: '',
-    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '',
+    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), sheetSel: new Set(), boardQ: '',
     queue: [], qi: 0, queueFilter: 'tasks', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
     // Smooth navigation: scroll position per page, the list a record was opened from (for Prev / Next),
@@ -446,22 +446,26 @@
     $('boardCols').classList.toggle('selecting', n > 0);
     $('selCount').textContent = `${n} selected`;
   }
-  function confirmDelete(ids) {
-    const list = ids.map((id) => state.pipeline.find((c) => c.id === id)).filter(Boolean);
+  // Delete deals (board) or leads (prospects sheet), one or many, after a confirm dialog.
+  function confirmDelete(ids, kind = 'deal') {
+    const pool = kind === 'deal' ? state.pipeline : state.contacts;
+    const sel = kind === 'deal' ? state.sel : state.sheetSel;
+    const list = ids.map((id) => pool.find((c) => c.id === id)).filter(Boolean);
     if (!list.length) return;
     const one = list.length === 1;
-    $('delTitle').textContent = one ? `Delete ${displayName(list[0])}?` : `Delete ${list.length} deals?`;
-    $('delText').textContent = (one ? 'This removes the deal and the contact' : `This removes ${list.slice(0, 5).map(displayName).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}, with their contacts`)
+    const word = (n) => `${kind}${n === 1 ? '' : 's'}`;
+    $('delTitle').textContent = one ? `Delete ${displayName(list[0])}?` : `Delete ${list.length} ${word(2)}?`;
+    $('delText').textContent = (one ? `This removes the ${kind}` : `This removes ${list.slice(0, 5).map(displayName).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}`)
       + ', plus all their texts, calls, tasks and notes. It can\'t be undone.';
-    $('delGo').textContent = one ? 'Delete deal' : `Delete ${list.length} deals`;
+    $('delGo').textContent = one ? `Delete ${kind}` : `Delete ${list.length} ${word(2)}`;
     $('delDialog').onclose = async () => {
       if ($('delDialog').returnValue !== 'ok') return;
       try {
         if (one) await api(`/api/contacts/${list[0].id}`, { method: 'DELETE', body: {} });
         else await api('/api/contacts/bulk-delete', { method: 'POST', body: { ids: list.map((c) => c.id) } });
-        list.forEach((c) => state.sel.delete(c.id));
-        toast(one ? `Deleted ${displayName(list[0])}.` : `Deleted ${list.length} deals.`);
-        await loadBoard();
+        list.forEach((c) => { sel.delete(c.id); state.cache.delete(c.id); });
+        toast(one ? `Deleted ${displayName(list[0])}.` : `Deleted ${list.length} ${word(2)}.`);
+        if (kind === 'deal') await loadBoard(); else { state.sig.contacts = ''; await loadContacts(); }
       } catch (err) { toast(err.message); }
     };
     $('delDialog').returnValue = '';
@@ -574,8 +578,8 @@
       const late = c.task_due && c.task_due < t;
       const last = c.last_touch || (c.last_activity_at || '').slice(0, 10);
       const stCls = stageClass(c.stage);
-      return `<tr data-id="${c.id}" class="${c.unread ? 'unread' : ''} ${stCls}">
-        <td class="c-n">${i + 1}</td>
+      return `<tr data-id="${c.id}" class="${c.unread ? 'unread' : ''} ${stCls} ${state.sheetSel.has(c.id) ? 'is-sel' : ''}">
+        <td class="c-n"><label class="rownum"><input type="checkbox" data-ssel="${c.id}" data-i="${i}" ${state.sheetSel.has(c.id) ? 'checked' : ''} aria-label="Select ${esc(displayName(c))}"><span>${i + 1}</span></label></td>
         <td class="c-biz"><input class="cell strong" data-f="business" value="${esc(c.business)}" placeholder="${esc(c.instagram ? '@' + c.instagram : 'Business')}">${c.unread ? '<span class="tag due" title="Unread text">New</span>' : ''}${c.hot ? '<span class="tag hot">Hot</span>' : ''}</td>
         <td><input class="cell" data-f="name" value="${esc(c.name)}" placeholder="-"></td>
         <td><input class="cell mono" data-f="phone" type="tel" value="${esc(fmtPhone(c.phone))}" placeholder="-"></td>
@@ -587,8 +591,44 @@
         <td class="c-notes"><input class="cell" data-f="notes" value="${esc((c.notes || '').split('\n').pop())}" title="${esc(c.notes)}" placeholder="-"></td>
         <td class="c-act"><button type="button" class="mini" data-touch="${c.id}" title="Log a message sent">+1</button><a class="mini" href="#c/${c.id}" title="Open record" aria-label="Open ${esc(displayName(c))}">↗</a></td>
       </tr>`;
-    }).join('') || `<tr><td colspan="11" class="empty-row sheet-empty">${state.contacts.length ? 'Nobody matches this filter.' : 'No prospects yet. Use Quick add above or Paste a list.'}</td></tr>`;
+    }).join('') || `<tr><td colspan="12" class="empty-row sheet-empty">${state.contacts.length ? 'Nobody matches this filter.' : 'No prospects yet. Use Quick add above or Paste a list.'}</td></tr>`;
+    renderSheetSel();
   }
+  // ---- select rows on the sheet + bulk delete ----
+  function renderSheetSel() {
+    const shown = new Set(sheetRows().map((c) => c.id));
+    for (const id of [...state.sheetSel]) if (!shown.has(id)) state.sheetSel.delete(id); // filters drop hidden rows from the selection
+    const n = state.sheetSel.size;
+    $('sheetSelBar').hidden = !n;
+    $('sheetSelCount').textContent = `${n} selected`;
+    $('sheetAll').checked = n > 0 && n === shown.size;
+    $('sheetAll').indeterminate = n > 0 && n < shown.size;
+    $('page-prospects').classList.toggle('selecting', n > 0);
+  }
+  let lastSel = -1;
+  $('contactRows').addEventListener('click', (e) => {
+    const box = e.target.closest('[data-ssel]'); if (!box) return;
+    const rows = sheetRows(); const i = Number(box.dataset.i);
+    const range = e.shiftKey && lastSel >= 0 ? rows.slice(Math.min(lastSel, i), Math.max(lastSel, i) + 1) : [rows[i]];
+    range.forEach((c) => (box.checked ? state.sheetSel.add(c.id) : state.sheetSel.delete(c.id)));
+    lastSel = i;
+    document.querySelectorAll('#contactRows [data-ssel]').forEach((el) => {
+      const on = state.sheetSel.has(Number(el.dataset.ssel)); el.checked = on; el.closest('tr').classList.toggle('is-sel', on);
+    });
+    renderSheetSel();
+  });
+  const selectAllShown = (on) => { sheetRows().forEach((c) => (on ? state.sheetSel.add(c.id) : state.sheetSel.delete(c.id))); renderTable(); };
+  $('sheetAll').addEventListener('change', (e) => selectAllShown(e.target.checked));
+  $('sheetSelAll').addEventListener('click', () => selectAllShown(true));
+  $('sheetSelClear').addEventListener('click', () => { state.sheetSel.clear(); renderTable(); });
+  $('sheetSelDelete').addEventListener('click', () => confirmDelete([...state.sheetSel], 'lead'));
+  document.addEventListener('keydown', (e) => {
+    if (state.page !== 'prospects' || !state.sheetSel.size || document.querySelector('dialog[open]')) return;
+    if (e.target.closest && e.target.closest('input:not([data-ssel]):not(#sheetAll), textarea, select')) return;
+    if (e.key === 'Escape') { state.sheetSel.clear(); renderTable(); }
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); confirmDelete([...state.sheetSel], 'lead'); }
+  });
+
   // Inline edits: a cell saves when it changes.
   async function saveCell(el) {
     const tr = el.closest('tr[data-id]'); if (!tr) return;
