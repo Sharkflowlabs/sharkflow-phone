@@ -4,7 +4,8 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Prospects tab statuses (cold outreach), then Deals tab stages. "Interested" is where a prospect becomes a deal.
 const PROSPECT_STAGES = ['New', 'Messaged', 'Replied', 'No reply', 'Not interested'];
-const DEAL_STAGES = ['Interested', 'Demo', 'In build', 'Closed / Site live', 'Lost'];
+// LTO = long-term opportunity: interested but parked for later.
+const DEAL_STAGES = ['Interested', 'Demo', 'In build', 'Closed / Site live', 'LTO', 'Lost'];
 const STAGES = [...PROSPECT_STAGES, ...DEAL_STAGES];
 // How the lead is being worked. Shown and editable as a column on the Prospects sheet.
 const CHANNELS = ['WhatsApp', 'Email', 'Facebook', 'Instagram', 'Call', 'Text'];

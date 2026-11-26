@@ -8,7 +8,7 @@ async function tw(path,params,bad){const url=B+path;const data=url+Object.keys(p
 ok((await api('/api/contacts')).status===401,'API needs login');
 ok((await api('/api/login',{method:'POST',body:{password:'wrong'}})).status===401,'wrong password rejected');
 ok((await api('/api/login',{method:'POST',body:{password:'test-pass'}})).status===200 && cookie,'login works');
-const me=await api('/api/me'); ok(me.data.stages.length===10 && me.data.prospectStages.join()==='New,Messaged,Replied,No reply,Not interested' && me.data.dealStages.join()==='Interested,Demo,In build,Closed / Site live,Lost' && me.data.channels.includes('WhatsApp') && me.data.callingReady,'me + prospect statuses + deal stages + channels');
+const me=await api('/api/me'); ok(me.data.stages.length===11 && me.data.prospectStages.join()==='New,Messaged,Replied,No reply,Not interested' && me.data.dealStages.join()==='Interested,Demo,In build,Closed / Site live,LTO,Lost' && me.data.channels.includes('WhatsApp') && me.data.callingReady,'me + prospect statuses + deal stages + channels');
 const c=await api('/api/contacts',{method:'POST',body:{phone:'(555) 201-3344',name:'Mike',business:'Mike Roofing'}}); ok(c.status===201 && c.data.contact.phone==='+15552013344','create contact normalizes phone');
 ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).status===409,'duplicate blocked');
 const id=c.data.contact.id;

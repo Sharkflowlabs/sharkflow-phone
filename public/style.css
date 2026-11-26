@@ -1,17 +1,17 @@
 :root {
-  /* "Linen & Pine" theme: warm paper background, white sheets, deep pine sidebar and accents,
-     clay for anything hot, soft status colours. Light, calm and easy to scan as a spreadsheet. */
-  color-scheme: light;
-  --bg: #f4f1ea; --panel: #ffffff; --panel-2: #faf8f3; --line: #e8e3d8; --line-2: #d9d1c1;
-  --text: #1d2a26; --muted: #6f7b75; --soft: #3f4d48; --navy: #14302a; --navy-2: #1d4038; --navy-3: #2a5247;
-  --cyan: #e2b75a; --blue: #1f6f5c; --grad: linear-gradient(135deg, #2b8a72 0%, #17594a 100%);
-  --gold: #1f6f5c; --gold-2: #2b8a72; --gold-ink: #17594a; --gold-bg: #e3f0ea;
-  --accent: #1f6f5c; --accent-bg: #ebf4f0; --on-accent: #ffffff;
-  --orange: #d9774b; --orange-bg: #fbece3;
-  --good: #2f8f5b; --good-bg: #e3f3e9; --bad: #c2453d; --bad-bg: #fbe8e6;
-  --warn: #b7791f; --warn-bg: #fbf1dc;
-  --bubble-in: #efebe2; --bubble-out: #1f6f5c;
-  --radius: 14px; --shadow: 0 1px 2px rgba(29, 42, 38, .05), 0 6px 20px rgba(29, 42, 38, .05);
+  /* "Night Pine" theme: near-black green background, deep pine panels, jade accents,
+     warm gold and clay highlights, soft status colours. Dark and calm, easy to scan as a spreadsheet. */
+  color-scheme: dark;
+  --bg: #0d1412; --panel: #141d1a; --panel-2: #1a2521; --line: #24332e; --line-2: #31453e;
+  --text: #e9f0eb; --muted: #8b9c95; --soft: #c3d0c9; --navy: #090f0d; --navy-2: #15211d; --navy-3: #22342e;
+  --cyan: #e2b75a; --blue: #34a37f; --grad: linear-gradient(135deg, #3fb38c 0%, #1e7a60 100%);
+  --gold: #34a37f; --gold-2: #45b892; --gold-ink: #86d8ba; --gold-bg: #12302a;
+  --accent: #3fb38c; --accent-bg: #12291f; --on-accent: #ffffff;
+  --orange: #e0895c; --orange-bg: #3a2216;
+  --good: #4cc38a; --good-bg: #10291d; --bad: #ef6b5e; --bad-bg: #3a1714;
+  --warn: #e6b04a; --warn-bg: #33270f;
+  --bubble-in: #1f2c28; --bubble-out: #2a8a6c;
+  --radius: 14px; --shadow: 0 1px 0 rgba(255, 255, 255, .02), 0 8px 24px rgba(0, 0, 0, .35);
   --display: Fraunces, Georgia, "Times New Roman", serif;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
@@ -68,6 +68,7 @@ h1, h2 { margin: 0; letter-spacing: -.01em; }
 .st-demo { --st: #3a97a6; }
 .st-in-build { --st: #d9774b; }
 .st-closed-site-live { --st: #2f8f5b; }
+.st-lto { --st: #9b8cc4; }
 .st-lost { --st: #c2453d; }
 .pill-stage { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--st) 14%, var(--panel)); color: var(--text); white-space: nowrap; }
 .pill-stage::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--st); }
@@ -625,12 +626,12 @@ dialog.wide { width: min(820px, calc(100% - 32px)); }
 
 
 /* ================= Linen & Pine overrides (light theme) ================= */
-.avatar { background: hsl(var(--h) 38% 91%); color: hsl(var(--h) 32% 32%); }
+.avatar { background: hsl(var(--h) 22% 20%); color: hsl(var(--h) 45% 78%); }
 .page-head h1 { font-family: var(--display); font-weight: 650; letter-spacing: -.02em; font-size: 30px; }
 .card h2, .dialog-form h2, .rec-id h1, .dial-who h2 { font-family: Inter, sans-serif; font-weight: 750; letter-spacing: -.015em; }
 .page-head p { color: var(--muted); opacity: 1; }
 .brand b { color: var(--muted); }
-.login { background: radial-gradient(ellipse at 50% 0%, rgba(31, 111, 92, .16), transparent 60%), var(--bg); }
+.login { background: radial-gradient(ellipse at 50% 0%, rgba(63, 179, 140, .18), transparent 60%), var(--bg); }
 .login-card { box-shadow: var(--shadow); }
 .btn { background: var(--panel); }
 .btn:hover { border-color: var(--muted); }
@@ -638,16 +639,16 @@ dialog.wide { width: min(820px, calc(100% - 32px)); }
 .btn.call { color: #fff; }
 input, select, textarea { background: var(--panel); }
 .tag { background: var(--bubble-in); color: var(--soft); }
-.tag.hot { background: var(--orange-bg); color: #9a4a25; }
+.tag.hot { background: var(--orange-bg); color: #f2b08e; }
 .tag.ch { background: var(--accent-bg); color: var(--gold-ink); }
 .count:not(:empty), .badge:not(:empty) { background: var(--orange); color: #fff; }
-.pill-stage { background: color-mix(in srgb, var(--st) 15%, var(--panel)); color: color-mix(in srgb, var(--st) 70%, var(--text)); }
+.pill-stage { background: color-mix(in srgb, var(--st) 18%, var(--panel)); color: color-mix(in srgb, var(--st) 55%, #fff); }
 
 /* rail: deep pine */
-.rail { background: var(--navy); border-right-color: var(--navy); }
-.nav { color: #a9c1b8; }
+.rail { background: var(--navy); border-right-color: var(--line); }
+.nav { color: #8fa69d; }
 .nav:hover { color: #fff; background: var(--navy-2); }
-.nav.active { color: #fff; background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .14); }
+.nav.active { color: #fff; background: rgba(63, 179, 140, .14); border-color: rgba(63, 179, 140, .35); }
 .nav.active svg { color: var(--cyan); }
 .nav[data-page="prospects"] svg, .nav[data-page="tasks"] svg { fill: none; stroke: currentColor; }
 .nav[data-page="deals"] svg { fill: currentColor; stroke: none; }
@@ -658,16 +659,16 @@ input, select, textarea { background: var(--panel); }
 .kpi-gold { --c: var(--accent); } .kpi-blue { --c: var(--cyan); } .kpi-green { --c: var(--good); } .kpi-red { --c: var(--orange); }
 .fstep span { color: var(--muted); }
 .funnel-row { grid-template-columns: repeat(var(--cols, 6), 1fr); }
-.col-title { color: color-mix(in srgb, var(--st) 65%, var(--text)); }
-.col { background: color-mix(in srgb, var(--st) 4%, var(--panel-2)); }
-.dcard { background: var(--panel); }
+.col-title { color: color-mix(in srgb, var(--st) 70%, #fff); }
+.col { background: color-mix(in srgb, var(--st) 5%, var(--panel)); }
+.dcard { background: var(--panel-2); }
 .dcard.is-sel { box-shadow: 0 0 0 1px var(--gold), 0 0 16px rgba(31, 111, 92, .2); }
 .d-add:hover, .d-add:focus-visible { color: var(--gold); border-color: rgba(31, 111, 92, .45); }
 .selbar { border-color: rgba(31, 111, 92, .5); }
 .ai-fab { box-shadow: 0 8px 24px rgba(20, 48, 42, .3), 0 0 0 4px rgba(31, 111, 92, .14); }
 .ai-head { background: linear-gradient(180deg, rgba(31, 111, 92, .08), transparent); }
 .ai-modes button:hover:not(:disabled) { color: var(--text); }
-.toast { background: var(--navy); border-color: var(--navy); }
+.toast { background: var(--navy-3); border-color: var(--line-2); }
 .subnav a.active { box-shadow: 0 4px 14px rgba(23, 89, 74, .22); }
 .pill-n:not(:empty) { color: var(--gold); }
 .subnav a:not(.active) .pill-n:not(:empty) { background: var(--gold); }
@@ -679,7 +680,7 @@ input, select, textarea { background: var(--panel); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-2); background: var(--panel); color: var(--soft); border-radius: 999px; padding: 5px 6px 5px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .chip:hover { border-color: var(--muted); color: var(--text); }
-.chip.active { background: var(--text); border-color: var(--text); color: #fff; }
+.chip.active { background: var(--gold); border-color: var(--gold); color: #fff; }
 .chip .dotc { width: 8px; height: 8px; border-radius: 50%; background: var(--st); }
 .chip-n { background: var(--bubble-in); color: var(--soft); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; min-width: 22px; text-align: center; }
 .chip.active .chip-n { background: rgba(255, 255, 255, .18); color: #fff; }
@@ -688,7 +689,7 @@ input, select, textarea { background: var(--panel); }
 .sheet { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .sheet th { position: sticky; top: 0; z-index: 3; background: var(--panel-2); text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line-2); border-right: 1px solid var(--line); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); white-space: nowrap; }
 .sheet td { padding: 0; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); height: 38px; white-space: nowrap; background: var(--panel); vertical-align: middle; }
-.sheet tr:hover td { background: #fbfaf6; }
+.sheet tr:hover td { background: #17221e; }
 .sheet tr.saving td { opacity: .6; }
 .sheet .c-n { width: 40px; min-width: 40px; text-align: center; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; background: var(--panel-2); position: sticky; left: 0; z-index: 2; }
 .sheet th.c-n { z-index: 4; }
@@ -696,16 +697,16 @@ input, select, textarea { background: var(--panel); }
 .sheet th.c-biz { z-index: 4; }
 .sheet td.c-biz { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
 .sheet .cell { display: block; width: 100%; min-width: 108px; height: 37px; border: 0; border-radius: 0; background: transparent; padding: 8px 10px; font-size: 13px; color: var(--text); }
-.sheet .cell::placeholder { color: #b7b0a3; }
+.sheet .cell::placeholder { color: #55665f; }
 .sheet .cell:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
-.sheet .cell:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: #fff; border-color: transparent; }
+.sheet .cell:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--panel-2); border-color: transparent; }
 .sheet .cell.strong { font-weight: 650; }
 .sheet .cell.mono { font-variant-numeric: tabular-nums; min-width: 132px; }
 .sheet tr.unread .cell.strong { font-weight: 800; }
 .sheet select.cell { appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 26px;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236f7b75' stroke-width='1.5'/%3E%3C/svg%3E") right 10px center no-repeat; }
 .sheet .c-status select.cell { width: auto; min-width: 128px; height: 26px; margin: 0 8px; padding: 3px 26px 3px 12px; border-radius: 999px; font-weight: 650;
-  background-color: color-mix(in srgb, var(--st) 15%, #fff); color: color-mix(in srgb, var(--st) 70%, var(--text)); }
+  background-color: color-mix(in srgb, var(--st) 20%, var(--panel)); color: color-mix(in srgb, var(--st) 55%, #fff); }
 .sheet .c-date { padding: 0 10px; color: var(--soft); font-variant-numeric: tabular-nums; }
 .touches { margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--bubble-in); border-radius: 6px; padding: 1px 5px; }
 .sheet .c-fu { padding: 0 8px; }
@@ -732,8 +733,8 @@ input, select, textarea { background: var(--panel); }
   .page-head h1 { font-size: 24px; }
 }
 /* Deals: all five columns fit on a laptop screen; Lost is narrower and muted */
-.board .col { flex: 1 1 0; min-width: 220px; }
-.board .col.st-lost { flex: .8 1 0; min-width: 190px; }
+.board .col { flex: 1 1 0; min-width: 196px; }
+.board .col.st-lost, .board .col.st-lto { flex: .85 1 0; min-width: 176px; }
 .board .col.st-lost .dcard { opacity: .85; }
 /* Prospects: chips on one row, search + filters on the next */
 .sheet-page .table-tools { flex-direction: column; align-items: stretch; gap: 10px; }
