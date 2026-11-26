@@ -43,7 +43,7 @@
   const stageClass = (s) => 'st-' + String(s).toLowerCase().replace(/[^a-z]+/g, '-').replace(/-+$/, '');
   const stagePill = (s) => `<span class="pill-stage ${stageClass(s)}">${esc(s)}</span>`;
   // Prospects tab statuses vs Deals tab stages (both come from the server in /api/me).
-  const DEAD = ['No reply', 'Not interested', 'Lost'];
+  const DEAD = ['No reply', 'Not interested', 'LTO', 'Lost'];
   const isDeal = (s) => state.me.dealStages.includes(s);
   const stageOptions = () => `<optgroup label="Prospects">${state.me.prospectStages.map((s) => `<option>${esc(s)}</option>`).join('')}</optgroup>`
     + `<optgroup label="Deals">${state.me.dealStages.map((s) => `<option>${esc(s)}</option>`).join('')}</optgroup>`;
@@ -212,7 +212,7 @@
     const board = state.me.stages.filter((s) => !DEAD.includes(s));
     const max = Math.max(1, ...board.map((s) => (by[s] || {}).n || 0));
     const nOf = (s) => (by[s] || {}).n || 0;
-    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${nOf('No reply')} no reply · ${nOf('Not interested')} not interested · ${nOf('Lost')} lost</span></div><div class="funnel-row" style="--cols:${board.length}">` + board.map((s) => {
+    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${nOf('No reply')} no reply · ${nOf('Not interested')} not interested · ${nOf('LTO')} LTO · ${nOf('Lost')} lost</span></div><div class="funnel-row" style="--cols:${board.length}">` + board.map((s) => {
       const x = by[s] || { n: 0, total: 0 };
       return `<a class="fstep ${stageClass(s)}" href="${isDeal(s) ? '#deals' : '#prospects'}"><span class="fbar" style="height:${8 + Math.round((x.n / max) * 56)}px"></span><b>${x.n}</b><span>${esc(s)}</span>${isDeal(s) ? `<em>${money(x.total)}</em>` : '<em>&nbsp;</em>'}</a>`;
     }).join('') + '</div>';
@@ -713,7 +713,7 @@
     $('lostWrap').hidden = c.stage !== 'Lost'; $('deadlineWrap').hidden = c.stage !== 'In build';
     // Progress bar: the prospect steps before Interested, or the deal steps after it.
     const deal = isDeal(c.stage);
-    const board = deal ? state.me.dealStages.filter((s) => s !== 'Lost') : state.me.prospectStages.filter((s) => !DEAD.includes(s));
+    const board = deal ? state.me.dealStages.filter((s) => !DEAD.includes(s)) : state.me.prospectStages.filter((s) => !DEAD.includes(s));
     const idx = board.indexOf(c.stage);
     $('dealHead').textContent = deal ? 'Deal' : 'Prospect';
     $('toDealsBtn').hidden = deal;
