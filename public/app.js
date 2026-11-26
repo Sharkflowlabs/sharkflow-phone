@@ -697,7 +697,8 @@
     const msgs = items.filter((i) => i.type === 'message');
     const hasOut = msgs.some((i) => i.direction === 'out' && !['failed', 'undelivered'].includes(i.status));
     const box = $('optOutCheck');
-    if (!hasOut) { box.checked = true; box.disabled = true; } else if (box.disabled) { box.disabled = false; box.checked = false; }
+    if (hasOut) $('optInNote').hidden = true;
+    if (!hasOut) { box.checked = false; box.disabled = true; $('optInNote').hidden = false; $('optInNote').title = state.me.optInConfirm; } else if (box.disabled) { box.disabled = false; box.checked = false; $('optInNote').hidden = true; }
     tl.innerHTML = msgs.map((i) => {
       const failed = ['failed', 'undelivered'].includes(i.status);
       const meta = [when(i.created_at), i.direction === 'out' ? (i.status || '') : '', failed && i.error ? i.error : ''].filter(Boolean).join(' · ');

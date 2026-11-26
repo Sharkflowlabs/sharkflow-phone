@@ -33,6 +33,8 @@ RECORDING_NOTICE = "This call may be recorded."
 # Websites allowed to post the public "text me my demo" form.
 OPTIN_ORIGINS = "https://sharkflowlabs.pages.dev,https://sharkflowlabs.com,https://www.sharkflowlabs.com"
 OPT_OUT_LINE = "Reply STOP to opt out."
+# First text to each contact is preceded by this opt-in confirmation (required disclosures for verbal opt-ins).
+OPT_IN_CONFIRM = "Sharkflow Labs: Thanks for agreeing to texts about your website demo. Msg frequency varies, msg & data rates may apply. Reply HELP for help, STOP to opt out."
 VOICEMAIL_GREETING = "Hi, you've reached Sharkflow Labs. Sorry we missed you. Please leave your name, number and a short message after the tone."
 
 # Secrets (set with `wrangler secret put NAME` or the GitHub Action):
