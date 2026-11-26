@@ -134,3 +134,5 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   const again=await api('/api/import',{method:'POST',body:{rows,preview:true}}); ok(again.data.rows.filter(x=>x.status==='new').length===0,'re-pasting the same rows finds nothing new');
   ok((await api('/api/import',{method:'POST',body:{rows:[]}})).status===400,'empty import rejected');
 }
+{ const me=await api('/api/me'); ok(me.data.senderEmail==='hello@sharkflowlabs.com','sender email for Gmail drafts');
+  const r=await api('/api/assistant/draft',{method:'POST',body:{contact_id:1,channel:'email',instructions:''}}); ok(r.status===400||r.status===503,'draft needs instructions (or an AI engine)'); }

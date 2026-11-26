@@ -142,6 +142,7 @@
     if (page === 'record') openContact(Number(m[1])).catch((e) => toast(e.message));
     // Going back to a list puts you where you were instead of jumping to the top.
     main.scrollTop = page === 'record' ? 0 : (state.scroll[page] || 0);
+    if (typeof syncAiContext === 'function') syncAiContext();
   }
   const goContact = (id) => { location.hash = 'c/' + id; };
 
@@ -563,6 +564,7 @@
     const wasCached = state.current && state.current.id === id;
     state.current = contact; state.cache.set(id, contact);
     fillContact();
+    syncAiContext();
     if (!wasCached) setTab(contact.unread ? 'texts' : 'activity');
     await Promise.all([loadTimeline(true), loadContactTasks()]);
     if (contact.unread) { await api(`/api/contacts/${id}/read`, { method: 'POST', body: {} }); contact.unread = 0; poll(); }
@@ -1266,8 +1268,38 @@
   $('rejectBtn').addEventListener('click', () => { if (state.incoming) state.incoming.reject(); });
   document.addEventListener('click', () => { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); }, { once: true });
 
-  // ---------- lead assistant (screenshot -> prospect) ----------
-  const ai = { images: [], busy: false };
+  // ---------- assistant: drafts for the open contact, or screenshot -> prospect ----------
+  const ai = { images: [], busy: false, mode: 'email', contactId: null, lastDraft: null };
+  const DRAFT_HINT = {
+    email: 'e.g. Email him the demo link and ask what he thinks by Friday',
+    text: 'e.g. Text her the demo link, keep it short',
+    dm: 'e.g. Follow up on my DM from last week, friendly',
+    lead: 'Attach or paste (Ctrl+V) a screenshot, or paste their details',
+  };
+  const onContact = () => state.page === 'record' && state.current;
+  function setAiMode(mode) {
+    if (mode !== 'lead' && !onContact()) mode = 'lead';
+    ai.mode = mode;
+    document.querySelectorAll('#aiModes [data-mode]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+      b.disabled = b.dataset.mode !== 'lead' && !onContact();
+    });
+    $('aiText').placeholder = DRAFT_HINT[mode];
+    $('aiSend').textContent = mode === 'lead' ? 'Read lead' : 'Draft';
+    document.querySelector('#aiForm .attach').hidden = mode !== 'lead';
+    $('aiThumbs').hidden = mode !== 'lead';
+  }
+  function syncAiContext() {
+    const c = onContact() ? state.current : null;
+    $('aiFabLabel').textContent = c ? 'Ask assistant' : 'Add lead with AI';
+    $('aiSub').textContent = c ? `Drafting for ${displayName(c)}. Tell me what to write.` : 'Open a contact to draft emails, texts and DMs, or add a lead from a screenshot.';
+    if (c && ai.contactId !== c.id) {
+      ai.contactId = c.id; ai.lastDraft = null;
+      if ($('aiLog').children.length) aiLog(`Now drafting for <b>${esc(displayName(c))}</b>.`, 'ai-msg sys');
+    }
+    setAiMode(c ? (ai.mode === 'lead' && !ai.images.length ? 'email' : ai.mode) : 'lead');
+  }
+  document.querySelectorAll('#aiModes [data-mode]').forEach((b) => b.addEventListener('click', () => { if (!b.disabled) { setAiMode(b.dataset.mode); ai.lastDraft = null; $('aiText').focus(); } }));
   const aiLog = (html, cls) => {
     const li = document.createElement('li'); li.className = cls; li.innerHTML = html;
     $('aiLog').appendChild(li); $('aiLog').scrollTop = $('aiLog').scrollHeight; return li;
@@ -1276,9 +1308,10 @@
     $('aiPanel').hidden = false; $('aiFab').hidden = true;
     if (!$('aiLog').children.length) {
       aiLog(state.me.assistantReady
-        ? 'Hi Sai. Send me a screenshot of a business (Google Maps, Instagram, Facebook, Yelp) or paste their details. I\'ll pull out the name, phone, Instagram and more, check it isn\'t already in your CRM, and add it to Prospects once you OK it.'
-        : 'The assistant isn\'t switched on yet. The Worker needs its Workers AI binding; redeploy it, then refresh.', 'ai-msg bot');
+        ? 'Hi Sai. On a contact, tell me what to send (an email, a text or an IG DM) and I\'ll draft it from their notes, stage and history. You review it, then copy it or open it in Gmail. Anywhere else, drop a screenshot of a business and I\'ll add it as a lead.'
+        : 'The assistant isn\'t switched on yet. Add an ANTHROPIC_API_KEY secret to the Worker (or its Workers AI binding), redeploy, then refresh.', 'ai-msg bot');
     }
+    syncAiContext();
     $('aiText').focus();
   }
   $('aiFab').addEventListener('click', openAi);
@@ -1316,11 +1349,11 @@
   $('aiFile').addEventListener('change', (e) => { addImages([...e.target.files]); e.target.value = ''; });
   $('aiText').addEventListener('paste', (e) => {
     const files = [...(e.clipboardData || {}).items || []].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
-    if (files.length) { e.preventDefault(); addImages(files); }
+    if (files.length) { e.preventDefault(); setAiMode('lead'); addImages(files); }
   });
   $('aiForm').addEventListener('dragover', (e) => { e.preventDefault(); $('aiForm').classList.add('drag'); });
   $('aiForm').addEventListener('dragleave', () => $('aiForm').classList.remove('drag'));
-  $('aiForm').addEventListener('drop', (e) => { e.preventDefault(); $('aiForm').classList.remove('drag'); addImages([...e.dataTransfer.files]); });
+  $('aiForm').addEventListener('drop', (e) => { e.preventDefault(); $('aiForm').classList.remove('drag'); setAiMode('lead'); addImages([...e.dataTransfer.files]); });
   $('aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('aiForm').requestSubmit(); } });
 
   $('aiForm').addEventListener('submit', async (e) => {
@@ -1328,7 +1361,8 @@
     if (ai.busy) return;
     const text = $('aiText').value.trim();
     if (!text && !ai.images.length) return;
-    if (!state.me.assistantReady) { aiLog('The assistant isn\'t switched on yet. Redeploy the Worker, then refresh.', 'ai-msg bot err'); return; }
+    if (!state.me.assistantReady) { aiLog('The assistant isn\'t switched on yet. Add an ANTHROPIC_API_KEY secret to the Worker, then refresh.', 'ai-msg bot err'); return; }
+    if (ai.mode !== 'lead') return draft(text);
     const images = ai.images; ai.images = []; renderThumbs(); $('aiText').value = '';
     aiLog(esc(text) + images.map((im) => `<img src="${im.url}" alt="">`).join(''), 'ai-msg me');
     const wait = aiLog('<span class="typing">Reading</span>', 'ai-msg bot');
@@ -1340,6 +1374,61 @@
     } catch (err) { wait.className = 'ai-msg bot err'; wait.textContent = err.message; }
     finally { ai.busy = false; $('aiSend').disabled = false; }
   });
+
+  async function draft(text) {
+    const c = state.current; if (!c) return;
+    $('aiText').value = '';
+    aiLog(esc(text), 'ai-msg me');
+    const wait = aiLog(`<span class="typing">${ai.lastDraft ? 'Revising' : 'Writing'}</span>`, 'ai-msg bot');
+    ai.busy = true; $('aiSend').disabled = true;
+    try {
+      const { draft: d } = await api('/api/assistant/draft', { method: 'POST', body: {
+        contact_id: c.id, channel: ai.mode, instructions: text, today: today(),
+        previous: ai.lastDraft && ai.lastDraft.channel === ai.mode ? { subject: ai.lastDraft.subject, body: ai.lastDraft.body } : null } });
+      wait.remove();
+      draftCard(c, d);
+    } catch (err) { wait.className = 'ai-msg bot err'; wait.textContent = err.message; }
+    finally { ai.busy = false; $('aiSend').disabled = false; $('aiText').focus(); }
+  }
+  const gmailUrl = (to, su, body) => `https://mail.google.com/mail/?authuser=${encodeURIComponent(state.me.senderEmail || '')}&view=cm&fs=1&to=${encodeURIComponent(to || '')}&su=${encodeURIComponent(su || '')}&body=${encodeURIComponent(body || '')}`;
+  function draftCard(c, d) {
+    ai.lastDraft = d;
+    const label = { email: 'Email', text: 'Text', dm: 'Instagram DM' }[d.channel];
+    const to = d.channel === 'email' ? (c.email || '') : d.channel === 'text' ? fmtPhone(c.phone) : (c.instagram ? '@' + c.instagram : '');
+    const actions = d.channel === 'email'
+      ? '<button type="button" class="btn small" data-act="copy">Copy</button><button type="button" class="btn primary small" data-act="gmail">Open in Gmail</button>'
+      : d.channel === 'text'
+        ? '<button type="button" class="btn small" data-act="copy">Copy</button><button type="button" class="btn primary small" data-act="totext">Put in text box</button>'
+        : `<button type="button" class="btn small" data-act="copy">Copy</button>${c.instagram ? '<button type="button" class="btn primary small" data-act="ig">Copy + open Instagram</button>' : ''}`;
+    const li = aiLog(`<div class="row between"><b>${label} draft</b><span class="muted small">${to ? 'To ' + esc(to) : `<span class="late">No ${d.channel === 'email' ? 'email' : d.channel === 'text' ? 'phone' : 'Instagram'} on file</span>`}</span></div>
+      ${d.channel === 'email' ? `<label>Subject<input data-k="subject" value="${esc(d.subject)}"></label>` : ''}
+      <label>Message<textarea data-k="body" rows="${Math.min(14, Math.max(4, d.body.split('\n').length + 1))}">${esc(d.body)}</textarea></label>
+      ${d.note ? `<div class="ai-dup">${esc(d.note)}</div>` : ''}
+      <div class="row wrap end">${actions}<button type="button" class="btn small" data-act="log" title="Add it to the timeline">Log as sent</button></div>
+      <div class="muted small">Edit it here, or tell me what to change (e.g. "shorter", "mention the price").</div>`, 'ai-card draft-card');
+    const val = (k) => { const el = li.querySelector(`[data-k="${k}"]`); return el ? el.value : ''; };
+    li.querySelectorAll('[data-k]').forEach((el) => el.addEventListener('input', () => { ai.lastDraft = { ...d, subject: val('subject'), body: val('body') }; }));
+    const copy = async (txt) => { try { await navigator.clipboard.writeText(txt); toast('Copied.'); } catch { toast('Copy failed. Select the text and copy it.'); } };
+    li.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-act]'); if (!b) return;
+      const subject = val('subject'), body = val('body');
+      if (b.dataset.act === 'copy') copy(d.channel === 'email' ? `Subject: ${subject}\n\n${body}` : body);
+      if (b.dataset.act === 'gmail') window.open(gmailUrl(c.email, subject, body), '_blank', 'noopener');
+      if (b.dataset.act === 'ig') { await copy(body); window.open(igUrl(c.instagram), '_blank', 'noopener'); }
+      if (b.dataset.act === 'totext') {
+        if (!state.current || state.current.id !== c.id) return toast('Open this contact first.');
+        setTab('texts'); $('msgInput').value = body; $('msgInput').dispatchEvent(new Event('input')); $('msgInput').focus();
+        toast('Draft is in the text box. Check it and press Send.');
+      }
+      if (b.dataset.act === 'log') {
+        try {
+          await api(`/api/contacts/${c.id}/notes`, { method: 'POST', body: { kind: d.channel === 'email' ? 'email' : d.channel === 'dm' ? 'dm' : 'note', body: d.channel === 'email' ? `Subject: ${subject}\n\n${body}` : d.channel === 'text' ? `Text sent outside the app: ${body}` : body } });
+          b.disabled = true; b.textContent = 'Logged'; toast('Logged on the timeline.');
+          if (state.current && state.current.id === c.id) loadTimeline(false).catch(() => {});
+        } catch (err) { toast(err.message); }
+      }
+    });
+  }
 
   function leadCard(lead, dups) {
     const f = (k, label, full) => `<label${full ? ' style="grid-column:1/-1"' : ''}>${label}<input data-k="${k}" value="${esc(lead[k])}"></label>`;

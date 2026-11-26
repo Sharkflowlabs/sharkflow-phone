@@ -474,20 +474,26 @@
     </form>
   </dialog>
 
-  <!-- Lead assistant -->
-  <button id="aiFab" class="ai-fab" hidden aria-label="Open lead assistant"><span>✦</span> Add lead with AI</button>
-  <aside id="aiPanel" class="ai-panel" hidden aria-label="Lead assistant">
+  <!-- Assistant: drafts for the open contact, or screenshot -> new lead -->
+  <button id="aiFab" class="ai-fab" hidden aria-label="Open assistant"><span>✦</span> <span id="aiFabLabel">Assistant</span></button>
+  <aside id="aiPanel" class="ai-panel" hidden aria-label="Assistant">
     <header class="ai-head">
-      <div><b>Lead assistant</b><div class="muted small">Drop a screenshot of a Google, Instagram or Facebook page. I'll fill in the prospect for you.</div></div>
+      <div class="grow"><b>Assistant</b><div class="muted small" id="aiSub">Tell me what to write, or drop a screenshot to add a lead.</div></div>
       <button class="icon-x" id="aiClose" aria-label="Close">✕</button>
     </header>
+    <div class="ai-modes" role="tablist" id="aiModes">
+      <button type="button" data-mode="email" class="active">Email</button>
+      <button type="button" data-mode="text">Text</button>
+      <button type="button" data-mode="dm">IG DM</button>
+      <button type="button" data-mode="lead">Add lead</button>
+    </div>
     <ol id="aiLog" class="ai-log"></ol>
     <form id="aiForm" class="ai-form">
       <div id="aiThumbs" class="ai-thumbs"></div>
       <textarea id="aiText" rows="2" placeholder="Attach or paste (Ctrl+V) a screenshot, or paste their details"></textarea>
       <div class="row between">
         <label class="btn small attach">📎 Screenshot<input id="aiFile" type="file" accept="image/*" multiple hidden></label>
-        <button class="btn primary" id="aiSend" type="submit">Read lead</button>
+        <button class="btn primary" id="aiSend" type="submit">Draft</button>
       </div>
     </form>
   </aside>
