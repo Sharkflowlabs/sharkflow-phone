@@ -2,22 +2,28 @@
 import Anthropic from '@anthropic-ai/sdk';
 // One Worker serves the UI (from /public), a JSON API under /api, and Twilio webhooks under /twilio.
 
-const STAGES = [
-  'Prospects', 'Attempt to connect', 'Connected', 'Interested', 'In build', 'Closed won + site live', 'LTO', 'Lost',
-];
+// Prospects tab statuses (cold outreach), then Deals tab stages. "Interested" is where a prospect becomes a deal.
+const PROSPECT_STAGES = ['New', 'Messaged', 'Replied', 'No reply', 'Not interested'];
+const DEAL_STAGES = ['Interested', 'Demo', 'In build', 'Closed / Site live', 'Lost'];
+const STAGES = [...PROSPECT_STAGES, ...DEAL_STAGES];
+// How the lead is being worked. Shown and editable as a column on the Prospects sheet.
+const CHANNELS = ['WhatsApp', 'Email', 'Facebook', 'Instagram', 'Call', 'Text'];
 const SOURCES = ['Instagram', 'Google Maps', 'Google Search', 'BBB', 'Website', 'Facebook', 'Yelp', 'Referral', 'Inbound form', 'ZoomInfo', 'Other'];
-const FIRST = 'Prospects';
-const ATC = 'Attempt to connect';
+const FIRST = 'New';
+const ATC = 'Messaged';
+const REPLIED = 'Replied';
+const NO_REPLY = 'No reply';
+const NOT_INTERESTED = 'Not interested';
 // Stages where nobody has answered yet: logging a touch follows the no-reply cadence.
-const EARLY = [FIRST, ATC, 'LTO', 'Lost'];
-// Pipeline value is counted from Interested onward.
-const PIPELINE = ['Interested', 'In build'];
-const WON = 'Closed won + site live';
+const EARLY = [FIRST, ATC, NO_REPLY];
+// Pipeline value is counted on open deals.
+const PIPELINE = ['Interested', 'Demo', 'In build'];
+const WON = 'Closed / Site live';
 // Tasks created automatically when a deal moves into a stage: [title, days from today].
 // Empty on purpose: Sai adds his own tasks/reminders (pipeline card "+ Task"); nothing is scheduled automatically.
 const STAGE_TASKS = {};
 // A deal is "stale" when it sits in one of these stages longer than this many days with no activity.
-const STALE_DAYS = { 'Connected': 3, 'Interested': 5, 'In build': 7 };
+const STALE_DAYS = { 'Replied': 3, 'Interested': 5, 'Demo': 5, 'In build': 7 };
 const OUTCOMES = {
   no_answer: 'No answer', voicemail: 'Left voicemail', connected: 'Connected', interested: 'Interested',
   not_interested: 'Not interested', callback: 'Call back later', bad_number: 'Wrong number',
@@ -197,6 +203,9 @@ async function handleApi(request, env, url) {
   if (path === '/api/me' && method === 'GET') {
     return json({
       stages: STAGES,
+      prospectStages: PROSPECT_STAGES,
+      dealStages: DEAL_STAGES,
+      channels: CHANNELS,
       optInChannels: OPT_IN_CHANNELS,
       number: env.TWILIO_NUMBER || null,
       callingReady: Boolean(env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET && env.TWILIO_TWIML_APP_SID),
@@ -220,12 +229,12 @@ async function handleApi(request, env, url) {
     const month = today.slice(0, 7);
     const r = await db.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Connected','Interested','In build')) AS active,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Replied','Interested','Demo','In build')) AS active,
         (SELECT COUNT(*) FROM tasks WHERE done = 0 AND due IS NOT NULL AND due <= ?) AS tasks_due,
-        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Interested','In build')) AS open_value,
-        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Interested','In build')) AS open_count,
-        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage = 'Closed won + site live' AND substr(stage_since,1,7) = ?) AS won_value,
-        (SELECT COUNT(*) FROM contacts WHERE stage = 'Closed won + site live' AND substr(stage_since,1,7) = ?) AS won_count,
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage IN ('Interested','Demo','In build')) AS open_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage IN ('Interested','Demo','In build')) AS open_count,
+        (SELECT COALESCE(SUM(value),0) FROM contacts WHERE stage = 'Closed / Site live' AND substr(stage_since,1,7) = ?) AS won_value,
+        (SELECT COUNT(*) FROM contacts WHERE stage = 'Closed / Site live' AND substr(stage_since,1,7) = ?) AS won_count,
         (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND substr(created_at,1,10) = ?) AS dials_today,
         (SELECT COUNT(*) FROM activities WHERE kind = 'dial' AND outcome IN ('connected','interested','not_interested','callback') AND substr(created_at,1,10) = ?) AS connects_today
     `).bind(today, month, month, today, today).first();
@@ -235,7 +244,7 @@ async function handleApi(request, env, url) {
 
   if (path === '/api/pipeline' && method === 'GET') {
     const { results } = await db.prepare(`
-      SELECT c.id, c.name, c.business, c.phone, c.email, c.website, c.instagram, c.source, c.stage, c.value, c.hot, c.touches, c.last_touch, c.next_step,
+      SELECT c.id, c.name, c.business, c.phone, c.email, c.website, c.instagram, c.source, c.channel, c.stage, c.value, c.hot, c.touches, c.last_touch, c.next_step,
         c.stage_since, c.deadline, c.lost_reason, c.unread, c.last_activity_at, c.created_at,
         t.id AS task_id, t.title AS task_title, t.due AS task_due,
         (SELECT COUNT(*) FROM tasks WHERE contact_id = c.id AND done = 0) AS open_tasks
@@ -430,8 +439,8 @@ async function handleApi(request, env, url) {
     const today = todayFrom((await readJson(request)).today);
     const c = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
     if (!c) throw new HttpError(404, 'Not found');
-    const early = EARLY.includes(c.stage);
-    if (early) await changeStage(db, id, 'Connected', today);
+    const early = EARLY.includes(c.stage) || c.stage === NOT_INTERESTED;
+    if (early) await changeStage(db, id, REPLIED, today);
     const contact = await db.prepare(`UPDATE contacts SET touches = 0, lost_reason = '', next_follow_up = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? RETURNING *`)
       .bind(nowIso(), nowIso(), id).first();
     return json({ contact });
@@ -465,7 +474,7 @@ async function handleApi(request, env, url) {
       FROM contacts c
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY ${view === 'due' ? 'task_due ASC,' : ''} COALESCE(c.last_activity_at, c.created_at) DESC
-      LIMIT 500`;
+      LIMIT 3000`;
     const { results } = await db.prepare(sql).bind(...args).all();
     const counts = await db.prepare(`
       SELECT
@@ -491,9 +500,9 @@ async function handleApi(request, env, url) {
     const now = nowIso();
     for (let i = 0; i < ok.length; i += 50) {
       await db.batch(ok.slice(i, i + 50).map(({ insert: c }) => db.prepare(`INSERT OR IGNORE INTO contacts
-        (name, business, phone, email, website, instagram, stage, notes, value, source, stage_since, touches, last_touch, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(c.name, c.business, c.phone, c.email, c.website, c.instagram, c.stage, c.notes, c.value, c.source, now.slice(0, 10), c.touches, c.last_touch, now, now)));
+        (name, business, phone, email, website, instagram, stage, notes, value, source, channel, stage_since, touches, last_touch, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(c.name, c.business, c.phone, c.email, c.website, c.instagram, c.stage, c.notes, c.value, c.source, c.channel, now.slice(0, 10), c.touches, c.last_touch, now, now)));
     }
     return json({ added: ok.length, skipped: checked.length - ok.length, rows: checked.map(({ insert, ...r }) => r) });
   }
@@ -512,7 +521,8 @@ async function handleApi(request, env, url) {
       if (!before) throw new HttpError(404, 'Not found');
       if ('instagram' in body) body.instagram = igHandle(body.instagram) || String(body.instagram || '').trim();
       if ('source' in body) body.source = cleanSource(body.source);
-      const fields = ['name', 'business', 'email', 'website', 'instagram', 'source', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
+      if ('channel' in body) body.channel = cleanChannel(body.channel);
+      const fields = ['channel', 'name', 'business', 'email', 'website', 'instagram', 'source', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
       const sets = [];
       const args = [];
       for (const f of fields) {
@@ -628,7 +638,7 @@ async function handleApi(request, env, url) {
     // (who we are, frequency, msg & data rates, HELP/STOP), as registered with carriers for verbal opt-ins.
     if (!sentBefore) await sendSms(env, db, url, contact, optInConfirmText(env));
     const data = await sendSms(env, db, url, contact, text);
-    await db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(nowIso(), id).run();
+    await db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'New' THEN 'Messaged' ELSE stage END WHERE id = ?").bind(nowIso(), id).run();
     return json({ ok: true, sid: data.sid });
   }
 
@@ -715,6 +725,14 @@ function cleanSource(v) {
   return SOURCES.find((x) => x.toLowerCase() === t.toLowerCase()) || 'Other';
 }
 
+function cleanChannel(v) {
+  const t = String(v ?? '').trim().toLowerCase();
+  if (!t) return '';
+  const alias = { wa: 'WhatsApp', 'whats app': 'WhatsApp', fb: 'Facebook', 'facebook dm': 'Facebook', ig: 'Instagram', 'instagram dm': 'Instagram',
+    phone: 'Call', 'cold call': 'Call', sms: 'Text', 'cold email': 'Email', 'e-mail': 'Email' };
+  return CHANNELS.find((x) => x.toLowerCase() === t) || alias[t] || '';
+}
+
 async function createContact(db, body) {
   const hasPhone = String(body.phone ?? '').trim() !== '';
   const phone = hasPhone ? normalizePhone(body.phone) : null;
@@ -728,10 +746,10 @@ async function createContact(db, body) {
   const followUp = null; // follow-up dates are retired; use tasks
   const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
-    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since, source, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
       .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), instagram, stage, followUp, s(body.notes),
-        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10), cleanSource(body.source))
+        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10), cleanSource(body.source), cleanChannel(body.channel))
       .first();
   } catch (e) {
     if (String(e).includes('UNIQUE')) throw new HttpError(409, 'A contact with that number already exists');
@@ -741,15 +759,15 @@ async function createContact(db, body) {
 
 async function logTouchFor(db, c, today, note) {
     const touches = (c.touches || 0) + 1;
-    let stage = c.stage === FIRST ? ATC : c.stage;
-    let follow, reason = c.lost_reason;
     // The no-reply cadence only applies before they've answered; later stages just log the touch.
+    // New or No reply -> Messaged; after MAX_TOUCHES with no answer -> No reply.
     const cadence = EARLY.includes(c.stage);
-    if (cadence && (c.stage === 'Lost' || c.stage === 'LTO')) stage = c.stage === 'LTO' ? 'LTO' : ATC;
+    let stage = cadence ? ATC : c.stage;
+    let follow, reason = c.lost_reason;
     // No automatic follow-up dates any more (Sai adds a task when he wants a reminder).
     follow = null;
-    if (cadence && touches >= MAX_TOUCHES) { stage = 'Lost'; reason = 'No response'; }
-    if (cadence && stage !== 'Lost') reason = '';
+    if (cadence && touches >= MAX_TOUCHES) stage = NO_REPLY;
+    if (cadence) reason = '';
     const text = String(note || '').trim().slice(0, 300);
     const notes = text ? `${c.notes ? c.notes + '\n' : ''}${today} touch ${touches}: ${text}` : c.notes;
     return db.prepare(`UPDATE contacts SET touches = ?, last_touch = ?, stage = ?, lost_reason = ?, next_follow_up = ?,
@@ -905,7 +923,7 @@ async function checkImportRows(db, rows, defaultStage) {
       name: s(row.name, 200), business: s(row.business, 200), email: s(row.email, 200).toLowerCase(), website: s(row.website, 500),
       instagram: igHandle(row.instagram) || s(row.instagram, 200), notes: s(row.notes),
       stage: STAGES.find((x) => x.toLowerCase() === s(row.stage).toLowerCase()) || defaultStage,
-      source: cleanSource(row.source), phone: null, value: null, touches: 0, last_touch: null,
+      source: cleanSource(row.source), channel: cleanChannel(row.channel), phone: null, value: null, touches: 0, last_touch: null,
     };
     const out = { line: i + 1, name: c.business || c.name || c.email || s(row.phone), stage: c.stage, source: c.source };
     const rawPhone = s(row.phone);
@@ -1069,8 +1087,8 @@ async function findDuplicates(db, lead) {
 async function changeStage(db, id, stage, today) {
   const stmts = [db.prepare(`UPDATE contacts SET stage = ?, stage_since = ?,
     deadline = CASE WHEN ? = 'In build' AND deadline IS NULL THEN ? ELSE deadline END,
-    next_follow_up = CASE WHEN ? = 'Closed won + site live' THEN NULL ELSE next_follow_up END,
-    touches = CASE WHEN ? IN ('Connected','Interested','In build','Closed won + site live') THEN 0 ELSE touches END,
+    next_follow_up = CASE WHEN ? = 'Closed / Site live' THEN NULL ELSE next_follow_up END,
+    touches = CASE WHEN ? IN ('Replied','Interested','Demo','In build','Closed / Site live') THEN 0 ELSE touches END,
     updated_at = ? WHERE id = ?`).bind(stage, today, stage, addDays(today, 7), stage, stage, nowIso(), id)];
   for (const [title, days] of STAGE_TASKS[stage] || []) {
     stmts.push(db.prepare(`INSERT INTO tasks (contact_id, title, due, auto)
@@ -1139,7 +1157,7 @@ async function handlePublicLead(request, env, url) {
   const noteLine = [`${day} website form`, lead.trade && `Trade: ${lead.trade}`, lead.message && `Message: ${lead.message}`].filter(Boolean).join(' | ');
   const db = env.DB;
   await db.prepare(`INSERT INTO contacts (phone, name, business, email, website, stage, opt_in_at, opt_in_channel, opt_in_note, unread, last_activity_at, notes, source)
-      VALUES (?, ?, ?, ?, ?, 'Prospects', ?, ?, ?, 1, ?, ?, 'Inbound form')
+      VALUES (?, ?, ?, ?, ?, 'New', ?, ?, ?, 1, ?, ?, 'Inbound form')
     ON CONFLICT(phone) DO UPDATE SET
       name = CASE WHEN contacts.name = '' THEN excluded.name ELSE contacts.name END,
       business = CASE WHEN contacts.business = '' THEN excluded.business ELSE contacts.business END,
@@ -1311,7 +1329,7 @@ async function handleTwilio(request, env, url) {
       if (contact) await db.batch([
         db.prepare("INSERT OR IGNORE INTO calls (contact_id, direction, twilio_sid, status, created_at) VALUES (?, 'out', ?, 'calling', ?)")
           .bind(contact.id, p.CallSid, ts),
-        db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'Prospects' THEN 'Attempt to connect' ELSE stage END WHERE id = ?").bind(ts, contact.id),
+        db.prepare("UPDATE contacts SET last_activity_at = ?, stage = CASE WHEN stage = 'New' THEN 'Messaged' ELSE stage END WHERE id = ?").bind(ts, contact.id),
       ]);
       return twiml(
         `<Dial callerId="${xmlEscape(env.TWILIO_NUMBER)}" answerOnBridge="true" timeout="30" action="${origin}/twilio/dial-done"${dialRecordAttrs(env, origin)}>` +
@@ -1350,12 +1368,16 @@ async function applyDisposition(db, c, outcome, note, today, callback) {
   const ts = nowIso();
   await db.prepare("INSERT INTO activities (contact_id, kind, outcome, body, created_at) VALUES (?, 'dial', ?, ?, ?)").bind(id, outcome, note, ts).run();
   if (outcome === 'no_answer' || outcome === 'voicemail') return logTouchFor(db, c, today, '');
-  if (outcome === 'connected' && EARLY.includes(c.stage)) await changeStage(db, id, 'Connected', today);
-  if (outcome === 'interested' && c.stage !== 'Interested' && !['In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
+  if (outcome === 'connected' && (EARLY.includes(c.stage) || c.stage === NOT_INTERESTED)) await changeStage(db, id, REPLIED, today);
+  if (outcome === 'interested' && !['Interested', 'Demo', 'In build', WON].includes(c.stage)) await changeStage(db, id, 'Interested', today);
   const sets = ['last_activity_at = ?', 'updated_at = ?'];
   const args = [ts, ts];
   if (outcome === 'connected' || outcome === 'interested') sets.push("lost_reason = ''");
-  if (outcome === 'not_interested') { sets.push("stage = 'Lost'", "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?'); args.push(today); }
+  // A deal that says no is Lost; a prospect that says no is Not interested (stays on the Prospects tab).
+  if (outcome === 'not_interested') {
+    sets.push('stage = ?', "lost_reason = 'Not interested'", 'next_follow_up = NULL', 'stage_since = ?');
+    args.push(DEAL_STAGES.includes(c.stage) ? 'Lost' : NOT_INTERESTED, today);
+  }
   // "Call back later" is the one outcome that asks for a date, so it becomes a task.
   if (outcome === 'callback') await db.prepare('INSERT INTO tasks (contact_id, title, due) VALUES (?, ?, ?)').bind(id, 'Call back', isDate(callback) ? callback : addDays(today, 1)).run();
   if (outcome === 'bad_number') { sets.push("notes = CASE WHEN notes = '' THEN ? ELSE notes || char(10) || ? END"); args.push(`${today}: wrong number ${c.phone || ''}`, `${today}: wrong number ${c.phone || ''}`); }
@@ -1365,6 +1387,6 @@ async function applyDisposition(db, c, outcome, note, today, callback) {
 async function findOrCreateContact(db, phone) {
   const existing = await db.prepare('SELECT * FROM contacts WHERE phone = ?').bind(phone).first();
   if (existing) return existing;
-  return db.prepare("INSERT INTO contacts (phone, stage) VALUES (?, 'Prospects') ON CONFLICT(phone) DO UPDATE SET phone = excluded.phone RETURNING *")
+  return db.prepare("INSERT INTO contacts (phone, stage) VALUES (?, 'New') ON CONFLICT(phone) DO UPDATE SET phone = excluded.phone RETURNING *")
     .bind(phone).first();
 }

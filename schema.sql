@@ -1,4 +1,5 @@
 -- Sharkflow Phone database (Cloudflare D1 / SQLite)
+-- Base tables. Later changes (new columns, renamed stages) live in migrations/ and run after this file.
 
 CREATE TABLE IF NOT EXISTS contacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -9,7 +10,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   website TEXT NOT NULL DEFAULT '',
   instagram TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',       -- where the lead was found: Instagram, Google Maps, BBB, ...
-  stage TEXT NOT NULL DEFAULT 'Prospects',
+  stage TEXT NOT NULL DEFAULT 'Prospects',  -- the app always sets it; see STAGES in src/worker.js (migration 0001 renamed them)
   next_follow_up TEXT,                   -- YYYY-MM-DD or NULL
   notes TEXT NOT NULL DEFAULT '',
   value INTEGER,                         -- deal value in dollars

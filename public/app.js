@@ -1,14 +1,14 @@
-// Sharkflow CRM front end: Home, Dialer, Pipeline, Contacts and contact records. Plain JS, no build step.
+// Sharkflow CRM front end: Home, Prospects (sheet), Deals (board), Dialer, Tasks and contact records. Plain JS, no build step.
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = {
-    me: null, page: 'home', contacts: [], counts: {}, current: null, view: '', stage: '', source: '', q: '',
-    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '', showLost: false,
+    me: null, page: 'home', contacts: [], counts: {}, current: null, view: 'prospects', source: '', channel: '', q: '',
+    pipeline: [], tasks: [], stats: {}, tk: { open: [], done: [], view: 'open', q: '', stage: '' }, sel: new Set(), boardQ: '',
     queue: [], qi: 0, queueFilter: 'tasks', session: { dials: 0, connects: 0, talk: 0 }, dialCall: null,
     device: null, call: null, incoming: null, timer: null,
     // Smooth navigation: scroll position per page, the list a record was opened from (for Prev / Next),
     // full contact rows we've already loaded, and a fingerprint of the last data drawn so polls only redraw on change.
-    scroll: {}, navIds: [], navFrom: 'contacts', cache: new Map(), sig: {},
+    scroll: {}, navIds: [], navFrom: 'prospects', cache: new Map(), sig: {},
   };
 
   // ---------- utils ----------
@@ -42,6 +42,11 @@
   const avatar = (c, cls = '') => `<span class="avatar ${cls}" style="--h:${hue(c)}">${esc(initials(c))}</span>`;
   const stageClass = (s) => 'st-' + String(s).toLowerCase().replace(/[^a-z]+/g, '-').replace(/-+$/, '');
   const stagePill = (s) => `<span class="pill-stage ${stageClass(s)}">${esc(s)}</span>`;
+  // Prospects tab statuses vs Deals tab stages (both come from the server in /api/me).
+  const DEAD = ['No reply', 'Not interested', 'Lost'];
+  const isDeal = (s) => state.me.dealStages.includes(s);
+  const stageOptions = () => `<optgroup label="Prospects">${state.me.prospectStages.map((s) => `<option>${esc(s)}</option>`).join('')}</optgroup>`
+    + `<optgroup label="Deals">${state.me.dealStages.map((s) => `<option>${esc(s)}</option>`).join('')}</optgroup>`;
   const lsGet = (k) => { try { return localStorage.getItem('sfc_' + k); } catch { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem('sfc_' + k, v); } catch { /* storage blocked */ } };
   let toastTimer;
@@ -95,9 +100,12 @@
     $('login').hidden = true; $('shell').hidden = false;
     $('aiFab').hidden = false;
     const opts = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
-    $('stageFilter').insertAdjacentHTML('beforeend', opts);
     $('tkStage').insertAdjacentHTML('beforeend', opts);
-    $('fStage').innerHTML = opts; $('newStage').innerHTML = opts;
+    $('fStage').innerHTML = $('newStage').innerHTML = stageOptions();
+    const chOpts = state.me.channels.map((x) => `<option>${esc(x)}</option>`).join('');
+    $('fChannel').insertAdjacentHTML('beforeend', chOpts); $('newChannel').insertAdjacentHTML('beforeend', chOpts);
+    $('qaChannel').innerHTML = '<option value="">Channel</option>' + chOpts; $('qaChannel').value = lsGet('qaChannel') || 'WhatsApp';
+    $('channelFilter').insertAdjacentHTML('beforeend', chOpts + '<option value="(none)">Not set</option>');
     const srcOpts = (state.me.sources || []).map((x) => `<option>${esc(x)}</option>`).join('');
     $('fSource').insertAdjacentHTML('beforeend', srcOpts); $('newSource').insertAdjacentHTML('beforeend', srcOpts);
     $('sourceFilter').insertAdjacentHTML('beforeend', srcOpts + '<option value="(none)">Not set</option>');
@@ -109,6 +117,7 @@
       `<button type="button" class="outcome oc-${k}" data-oc="${k}">${esc(v)}</button>`).join('');
     $('outcomes').innerHTML = Object.entries(state.me.outcomes).map(([k, v], i) =>
       `<button type="button" class="outcome oc-${k}" data-outcome="${k}"><kbd>${i + 1}</kbd>${esc(v)}</button>`).join('');
+    state.view = lsGet('view') || 'prospects';
     initScript();
     if (window.matchMedia('(max-width: 900px)').matches) document.querySelector('.props').open = false;
     window.addEventListener('hashchange', route);
@@ -122,21 +131,24 @@
   function route() {
     const h = location.hash.slice(1) || lsGet('page') || 'home';
     const m = /^c\/(\d+)$/.exec(h);
-    const page = m ? 'record' : (['home', 'dialer', 'pipeline', 'contacts', 'tasks'].includes(h) ? h : 'home');
+    const alias = { contacts: 'prospects', pipeline: 'deals' };
+    const name = alias[h] || h;
+    const page = m ? 'record' : (['home', 'dialer', 'deals', 'prospects', 'tasks'].includes(name) ? name : 'home');
     const main = document.querySelector('.main');
     const prev = state.page;
     if (prev !== 'record') state.scroll[prev] = main.scrollTop;
     // Opening a lead from a list: remember that list so Prev / Next can walk through it.
-    if (page === 'record' && prev === 'contacts') { state.navIds = state.contacts.map((c) => c.id); state.navFrom = 'contacts'; }
-    if (page === 'record' && prev === 'pipeline') { state.navIds = boardOrder().map((c) => c.id); state.navFrom = 'pipeline'; }
+    if (page === 'record' && prev === 'prospects') { state.navIds = sheetRows().map((c) => c.id); state.navFrom = 'prospects'; }
+    if (page === 'record' && prev === 'deals') { state.navIds = boardOrder().map((c) => c.id); state.navFrom = 'deals'; }
     if (page === 'record' && (prev === 'tasks' || prev === 'home')) { state.navIds = []; state.navFrom = prev; }
     state.page = page;
     if (!m) lsSet('page', page);
     document.querySelectorAll('.page').forEach((p) => { p.hidden = p.id !== 'page-' + page; });
-    document.querySelectorAll('.rail .nav[data-page]').forEach((a) => a.classList.toggle('active', a.dataset.page === (page === 'record' ? 'contacts' : page)));
+    const recTab = page === 'record' ? (['deals', 'prospects', 'tasks', 'home'].includes(state.navFrom) ? state.navFrom : 'prospects') : page;
+    document.querySelectorAll('.rail .nav[data-page]').forEach((a) => a.classList.toggle('active', a.dataset.page === recTab));
     if (page === 'home') loadHome().catch((e) => toast(e.message));
-    if (page === 'pipeline') loadBoard().catch((e) => toast(e.message));
-    if (page === 'contacts') loadContacts().catch((e) => toast(e.message));
+    if (page === 'deals') loadBoard().catch((e) => toast(e.message));
+    if (page === 'prospects') loadContacts().catch((e) => toast(e.message));
     if (page === 'tasks') loadTasks().catch((e) => toast(e.message));
     if (page === 'dialer') { loadQueue().catch((e) => toast(e.message)); loadCallLog(); }
     if (page === 'record') openContact(Number(m[1])).catch((e) => toast(e.message));
@@ -151,12 +163,10 @@
     const c = await api('/api/contacts?view=unread&today=' + today()).catch(() => null);
     if (c) setCounts(c.counts);
     if (state.page === 'record' && state.current && !state.call) loadTimeline(false).catch(() => {});
-    if (state.page === 'contacts') loadContacts().catch(() => {});
+    if (state.page === 'prospects') loadContacts().catch(() => {});
   }
   function setCounts(counts) {
     state.counts = counts || {};
-    $('unreadCount').textContent = state.counts.unread || '';
-    $('dueCount').textContent = state.counts.due || '';
     $('inboxCount').textContent = state.counts.unread || '';
     const n = state.counts.unread || 0;
     document.title = n ? `(${n}) Sharkflow CRM` : 'Sharkflow CRM';
@@ -164,7 +174,12 @@
 
   // ---------- new contact ----------
   document.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => {
-    $('newForm').reset(); $('newError').textContent = ''; $('newDialog').showModal();
+    const deal = b.dataset.new === 'deal';
+    $('newForm').reset(); $('newError').textContent = '';
+    $('newTitle').textContent = deal ? 'New deal' : 'New prospect';
+    $('newStage').value = deal ? state.me.dealStages[0] : state.me.prospectStages[0];
+    $('newChannel').value = deal ? '' : ($('qaChannel').value || '');
+    $('newDialog').showModal();
   }));
   $('newForm').addEventListener('submit', async (e) => {
     if (e.submitter && e.submitter.value === 'cancel') return;
@@ -188,17 +203,18 @@
     $('hello').textContent = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
     $('helloSub').textContent = new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
     $('kpis').innerHTML = [
-      ['Pipeline', money(stats.open_value), `${stats.open_count} deal${stats.open_count === 1 ? '' : 's'} in Interested + In build`, 'gold'],
+      ['Open deals', money(stats.open_value), `${stats.open_count} deal${stats.open_count === 1 ? '' : 's'} in Interested, Demo, In build`, 'gold'],
       ['Closed won this month', money(stats.won_value), `${stats.won_count} site${stats.won_count === 1 ? '' : 's'} live`, 'green'],
       ['Calls today', stats.dials_today, `${stats.connects_today} connected`, 'blue'],
       ['Tasks due', stats.tasks_due, 'Due today or overdue', 'red'],
     ].map(([k, v, s, c]) => `<div class="kpi kpi-${c}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></div>`).join('');
     const by = Object.fromEntries((stats.stages || []).map((x) => [x.stage, x]));
-    const board = state.me.stages.filter((s) => s !== 'Lost' && s !== 'LTO');
+    const board = state.me.stages.filter((s) => !DEAD.includes(s));
     const max = Math.max(1, ...board.map((s) => (by[s] || {}).n || 0));
-    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${(by.LTO || {}).n || 0} LTO · ${(by.Lost || {}).n || 0} lost</span></div><div class="funnel-row">` + board.map((s) => {
+    const nOf = (s) => (by[s] || {}).n || 0;
+    $('funnel').innerHTML = `<div class="card-head"><h2>Funnel</h2><span class="muted">${nOf('No reply')} no reply · ${nOf('Not interested')} not interested · ${nOf('Lost')} lost</span></div><div class="funnel-row" style="--cols:${board.length}">` + board.map((s) => {
       const x = by[s] || { n: 0, total: 0 };
-      return `<a class="fstep ${stageClass(s)}" href="#pipeline"><span class="fbar" style="height:${8 + Math.round((x.n / max) * 56)}px"></span><b>${x.n}</b><span>${esc(s)}</span>${state.me.pipelineStages.includes(s) || s === state.me.stages[5] ? `<em>${money(x.total)}</em>` : '<em>&nbsp;</em>'}</a>`;
+      return `<a class="fstep ${stageClass(s)}" href="${isDeal(s) ? '#deals' : '#prospects'}"><span class="fbar" style="height:${8 + Math.round((x.n / max) * 56)}px"></span><b>${x.n}</b><span>${esc(s)}</span>${isDeal(s) ? `<em>${money(x.total)}</em>` : '<em>&nbsp;</em>'}</a>`;
     }).join('') + '</div>';
 
     const due = state.tasks.filter((x) => x.due && x.due <= t);
@@ -226,8 +242,8 @@
 
   async function logTouch(id) {
     const { contact } = await api(`/api/contacts/${id}/touch`, { method: 'POST', body: { today: today() } });
-    toast(contact.stage === 'Lost' ? `${displayName(contact)} moved to Lost (no response).`
-      : `Touch ${contact.touches} logged.`);
+    toast(contact.stage === 'No reply' ? `${displayName(contact)} moved to No reply after ${contact.touches} messages.`
+      : `Message ${contact.touches} logged · ${contact.stage}.`);
     return contact;
   }
   async function markReplied(id) {
@@ -241,8 +257,8 @@
     const t = e.target.closest('[data-touch],[data-replied],[data-deltask],[data-dial]');
     if (!t) return;
     try {
-      if (t.dataset.touch) { await logTouch(Number(t.dataset.touch)); await loadHome(); }
-      else if (t.dataset.replied) { await markReplied(Number(t.dataset.replied)); await loadHome(); }
+      if (t.dataset.touch) { await logTouch(Number(t.dataset.touch)); await refreshList(); }
+      else if (t.dataset.replied) { await markReplied(Number(t.dataset.replied)); await refreshList(); }
       else if (t.dataset.deltask) { await api(`/api/tasks/${t.dataset.deltask}`, { method: 'DELETE', body: {} }); refreshTasks(); }
       else if (t.dataset.dial) { state.pendingDial = Number(t.dataset.dial); location.hash = 'dialer'; }
     } catch (err) { toast(err.message); }
@@ -253,10 +269,16 @@
     try { await api(`/api/tasks/${t.dataset.done}`, { method: 'PATCH', body: { done: t.checked } }); refreshTasks(); }
     catch (err) { toast(err.message); }
   });
+  function refreshList() {
+    if (state.page === 'home') return loadHome();
+    if (state.page === 'prospects') return loadContacts();
+    if (state.page === 'deals') return loadBoard();
+  }
   function refreshTasks() {
     if (state.page === 'home') loadHome().catch(() => {});
     if (state.page === 'tasks') loadTasks().catch(() => {});
     if (state.page === 'record') loadContactTasks().catch(() => {});
+    if (state.page === 'prospects') loadContacts().catch(() => {});
   }
   $('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -352,10 +374,10 @@
     state.sig.board = sig;
     renderBoard();
   }
-  const boardStages = () => state.me.stages.filter((s) => state.showLost || s !== 'Lost');
+  const boardStages = () => state.me.dealStages;
   function boardList() {
     const q = state.boardQ.toLowerCase();
-    return state.pipeline.filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step, c.source].join(' ').toLowerCase().includes(q));
+    return state.pipeline.filter((c) => isDeal(c.stage)).filter((c) => !q || [c.name, c.business, c.instagram, c.phone, c.next_step, c.source].join(' ').toLowerCase().includes(q));
   }
   // Cards in the order they appear on the board: column by column, top to bottom.
   const boardOrder = () => { const list = boardList(); return boardStages().flatMap((s) => list.filter((c) => c.stage === s)); };
@@ -363,8 +385,9 @@
     const t = today();
     const stages = boardStages();
     const list = boardList();
-    const pipeTotal = state.pipeline.filter((c) => state.me.pipelineStages.includes(c.stage)).reduce((n, c) => n + (c.value || 0), 0);
-    $('boardSub').textContent = `Pipeline ${money(pipeTotal)} (Interested + In build) · drag a card to move it`;
+    const open = state.pipeline.filter((c) => state.me.pipelineStages.includes(c.stage));
+    const pipeTotal = open.reduce((n, c) => n + (c.value || 0), 0);
+    $('boardSub').textContent = `${open.length} open deal${open.length === 1 ? '' : 's'} worth ${money(pipeTotal)} · drag a card to move it`;
     $('boardCols').innerHTML = stages.map((s) => {
       const cards = list.filter((c) => c.stage === s);
       const total = cards.reduce((n, c) => n + (c.value || 0), 0);
@@ -374,7 +397,7 @@
           const st = staleDays(c);
           const tags = [
             c.hot ? '<span class="tag hot">Hot</span>' : '',
-            c.touches && (s === 'Attempt to connect' || s === 'LTO') ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '',
+            c.channel ? `<span class="tag ch">${esc(c.channel)}</span>` : '',
             st ? `<span class="tag stale">Stuck ${st}d</span>` : '',
             c.deadline && s === 'In build' ? `<span class="tag ${c.deadline <= t ? 'due' : ''}">Deliver ${esc(shortDate(c.deadline))}</span>` : '',
             c.lost_reason && s === 'Lost' ? `<span class="tag">${esc(c.lost_reason)}</span>` : '',
@@ -399,8 +422,8 @@
   }
   // ---- "+ Task" shortcut on a deal card ----
   function openQuickTask(id) {
-    const c = state.pipeline.find((x) => x.id === id); if (!c) return;
-    $('qtForm').reset(); $('qtForm').dataset.id = id;
+    const c = state.pipeline.find((x) => x.id === id) || state.contacts.find((x) => x.id === id); if (!c) return;
+    $('qtForm').reset(); $('qtForm').dataset.id = id; $('qtTitle').value = isDeal(c.stage) ? '' : 'Follow up';
     $('qtWho').textContent = displayName(c);
     $('qtDialog').showModal(); $('qtTitle').focus();
   }
@@ -411,7 +434,7 @@
     try {
       await api('/api/tasks', { method: 'POST', body: { title: $('qtTitle').value, due: $('qtDue').value || null, contact_id: Number($('qtForm').dataset.id) } });
       $('qtDialog').close(); toast('Task added.');
-      if (state.page === 'pipeline') loadBoard(); else if (state.page === 'dialer') loadQueue();
+      if (state.page === 'deals') loadBoard(); else if (state.page === 'dialer') loadQueue(); else if (state.page === 'prospects') loadContacts();
     } catch (err) { toast(err.message); }
   });
 
@@ -451,13 +474,12 @@
     renderBoard();
   });
   document.addEventListener('keydown', (e) => {
-    if (state.page !== 'pipeline' || !state.sel.size || document.querySelector('dialog[open]')) return;
+    if (state.page !== 'deals' || !state.sel.size || document.querySelector('dialog[open]')) return;
     if (e.target.closest && e.target.closest('input:not(.d-sel), textarea, select')) return;
     if (e.key === 'Escape') { state.sel.clear(); renderBoard(); }
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); confirmDelete([...state.sel]); }
   });
   $('boardSearch').addEventListener('input', (e) => { state.boardQ = e.target.value.trim(); renderBoard(); });
-  $('showLost').addEventListener('change', (e) => { state.showLost = e.target.checked; renderBoard(); });
   $('boardCols').addEventListener('click', (e) => {
     const card = e.target.closest('.dcard'); if (!card) return;
     const id = Number(card.dataset.id);
@@ -501,53 +523,131 @@
     } catch (err) { toast(err.message); loadBoard(); }
   });
 
-  // ---------- contacts table ----------
+  // ---------- prospects sheet ----------
+  // Everyone is loaded once; the status chips, search and filters work instantly on this list.
   async function loadContacts() {
-    const params = new URLSearchParams({ today: today() });
-    if (state.view) params.set('view', state.view);
-    if (state.stage) params.set('stage', state.stage);
-    if (state.source) params.set('source', state.source);
-    if (state.q) params.set('q', state.q);
-    const data = await api('/api/contacts?' + params);
+    const data = await api('/api/contacts?today=' + today());
     state.contacts = data.contacts; setCounts(data.counts);
     data.contacts.forEach((c) => state.cache.set(c.id, c));
     const sig = JSON.stringify(data.contacts);
-    if (sig === state.sig.contacts) return; // nothing changed: leave the table (and your place in it) alone
+    if (sig === state.sig.contacts) return; // nothing changed: leave the sheet (and your place in it) alone
     state.sig.contacts = sig;
     renderTable();
   }
+  // Chip filters: each prospect status, plus everyone already in Deals, follow-ups due and unread texts.
+  const chipDefs = () => [
+    ['prospects', 'All prospects', (c) => !isDeal(c.stage)],
+    ...state.me.prospectStages.map((s) => [s, s, (c) => c.stage === s]),
+    ['deals', 'In Deals', (c) => isDeal(c.stage)],
+    ['due', 'Follow-up due', (c) => c.task_due && c.task_due <= today()],
+    ['unread', 'Unread texts', (c) => c.unread > 0],
+  ];
+  function sheetRows() {
+    const def = chipDefs().find((d) => d[0] === state.view) || chipDefs()[0];
+    const q = state.q.toLowerCase();
+    return state.contacts.filter(def[2])
+      .filter((c) => !state.channel || (state.channel === '(none)' ? !c.channel : c.channel === state.channel))
+      .filter((c) => !state.source || (state.source === '(none)' ? !c.source : c.source === state.source))
+      .filter((c) => !q || [c.name, c.business, c.phone, c.email, c.instagram, c.notes, c.website].join(' ').toLowerCase().includes(q))
+      .sort(state.view === 'due' ? (a, b) => String(a.task_due).localeCompare(String(b.task_due)) : () => 0);
+  }
+  function renderChips() {
+    $('statusChips').innerHTML = chipDefs().map(([key, label, fn], i) => {
+      const n = state.contacts.filter(fn).length;
+      const sep = key === 'deals' ? '<span class="chip-sep"></span>' : '';
+      const cls = state.me.stages.includes(key) ? stageClass(key) : '';
+      return `${sep}<button type="button" role="tab" class="chip ${cls} ${state.view === key ? 'active' : ''}" data-view="${esc(key)}">${i && cls ? '<i class="dotc"></i>' : ''}${esc(label)}<span class="chip-n">${n}</span></button>`;
+    }).join('');
+  }
+  const selectCell = (field, value, options, blank) => `<select class="cell" data-f="${field}">${blank !== undefined ? `<option value="">${blank}</option>` : ''}${options}</select>`.replace(`<option>${esc(value)}</option>`, `<option selected>${esc(value)}</option>`);
   function renderTable() {
     const t = today();
-    $('contactsSub').textContent = `${state.contacts.length} contact${state.contacts.length === 1 ? '' : 's'}`;
-    $('contactRows').innerHTML = state.contacts.map((c) => {
+    renderChips();
+    const rows = sheetRows();
+    const prospects = state.contacts.filter((c) => !isDeal(c.stage)).length;
+    $('contactsSub').textContent = `${prospects} prospect${prospects === 1 ? '' : 's'} · ${state.contacts.length - prospects} in Deals · showing ${rows.length}`;
+    const chOpts = state.me.channels.map((x) => `<option>${esc(x)}</option>`).join('');
+    const srcOpts = state.me.sources.map((x) => `<option>${esc(x)}</option>`).join('');
+    const stOpts = stageOptions();
+    $('contactRows').innerHTML = rows.map((c, i) => {
       const due = c.task_due && c.task_due <= t;
-      return `<tr data-id="${c.id}" class="${c.unread ? 'unread' : ''}">
-        <td><div class="name-cell">${avatar(c, 'sm')}<div><a href="#c/${c.id}" class="cname">${esc(displayName(c))}</a>${c.hot ? ' <span class="tag hot">Hot</span>' : ''}${c.unread ? ' <span class="tag due">New text</span>' : ''}
-          <div class="muted">${esc(c.last_body ? (c.last_direction === 'out' ? 'You: ' : '') + c.last_body : (c.instagram ? '@' + c.instagram : c.email || ''))}</div></div></div></td>
-        <td>${stagePill(c.stage)}</td>
-        <td class="hide-s">${c.source ? esc(c.source) : '<span class="muted">-</span>'}</td>
-        <td class="num hide-s">${c.value ? money(c.value) : '<span class="muted">-</span>'}</td>
-        <td class="hide-s">${esc(fmtPhone(c.phone)) || '<span class="muted">-</span>'}</td>
-        <td class="next-task">${c.task_title ? `<span class="nt-title">${esc(c.task_title)}</span>${c.task_due ? ` <span class="${due ? 'late' : ''}">· ${esc(shortDate(c.task_due))}</span>` : ''}` : '<span class="muted">-</span>'}</td>
-        <td class="hide-s muted">${esc(when(c.last_activity_at || c.updated_at))}</td>
+      const late = c.task_due && c.task_due < t;
+      const last = c.last_touch || (c.last_activity_at || '').slice(0, 10);
+      const stCls = stageClass(c.stage);
+      return `<tr data-id="${c.id}" class="${c.unread ? 'unread' : ''} ${stCls}">
+        <td class="c-n">${i + 1}</td>
+        <td class="c-biz"><input class="cell strong" data-f="business" value="${esc(c.business)}" placeholder="${esc(c.instagram ? '@' + c.instagram : 'Business')}">${c.unread ? '<span class="tag due" title="Unread text">New</span>' : ''}${c.hot ? '<span class="tag hot">Hot</span>' : ''}</td>
+        <td><input class="cell" data-f="name" value="${esc(c.name)}" placeholder="-"></td>
+        <td><input class="cell mono" data-f="phone" type="tel" value="${esc(fmtPhone(c.phone))}" placeholder="-"></td>
+        <td>${selectCell('channel', c.channel, chOpts, '-')}</td>
+        <td class="c-status">${selectCell('stage', c.stage, stOpts)}</td>
+        <td>${selectCell('source', c.source, srcOpts, '-')}</td>
+        <td class="c-date">${last ? esc(shortDate(last)) : '<span class="muted">-</span>'}${c.touches && !isDeal(c.stage) ? `<span class="touches" title="Messages sent with no reply">${c.touches}×</span>` : ''}</td>
+        <td class="c-fu">${c.task_title ? `<button type="button" class="fu ${late ? 'late' : due ? 'today' : ''}" data-addtask="${c.id}" title="${esc(c.task_title)}">${c.task_due ? (c.task_due === t ? 'Today' : (late ? 'Overdue ' : '') + esc(shortDate(c.task_due))) : esc(c.task_title)}</button>` : `<button type="button" class="fu add" data-addtask="${c.id}" title="Add a follow-up">+ Add</button>`}</td>
+        <td class="c-notes"><input class="cell" data-f="notes" value="${esc((c.notes || '').split('\n').pop())}" title="${esc(c.notes)}" placeholder="-"></td>
+        <td class="c-act"><button type="button" class="mini" data-touch="${c.id}" title="Log a message sent">+1</button><a class="mini" href="#c/${c.id}" title="Open record" aria-label="Open ${esc(displayName(c))}">↗</a></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" class="empty-row">No contacts here.</td></tr>';
+    }).join('') || `<tr><td colspan="11" class="empty-row sheet-empty">${state.contacts.length ? 'Nobody matches this filter.' : 'No prospects yet. Use Quick add above or Paste a list.'}</td></tr>`;
   }
-  $('contactRows').addEventListener('click', (e) => {
-    if (e.target.closest('a')) return;
-    const tr = e.target.closest('tr[data-id]'); if (tr) goContact(tr.dataset.id);
+  // Inline edits: a cell saves when it changes.
+  async function saveCell(el) {
+    const tr = el.closest('tr[data-id]'); if (!tr) return;
+    const id = Number(tr.dataset.id); const c = state.contacts.find((x) => x.id === id); if (!c) return;
+    const f = el.dataset.f; let v = el.value.trim();
+    if (f === 'notes') {
+      // The cell holds the latest line of the notes; editing it replaces that line and keeps the rest.
+      const lines = (c.notes || '').split('\n');
+      if (v === lines[lines.length - 1]) return;
+      lines.pop(); if (v) lines.push(v); v = lines.join('\n');
+    } else if ((f === 'phone' ? fmtPhone(c.phone) : (c[f] || '')) === v) return;
+    tr.classList.add('saving');
+    try {
+      const { contact } = await api(`/api/contacts/${id}`, { method: 'PATCH', body: { [f]: v, today: today() } });
+      Object.assign(c, contact); state.cache.set(id, { ...state.cache.get(id), ...contact });
+      if (f === 'stage') toast(isDeal(contact.stage) ? `${displayName(contact)} moved to Deals (${contact.stage}).` : `${displayName(contact)}: ${contact.stage}`);
+      if (f === 'channel') { $('qaChannel').value = v || $('qaChannel').value; }
+      state.sig.contacts = ''; await loadContacts();
+    } catch (err) { toast(err.message); renderTable(); }
+    finally { tr.classList.remove('saving'); }
+  }
+  $('contactRows').addEventListener('change', (e) => { if (e.target.matches('select.cell')) saveCell(e.target); });
+  $('contactRows').addEventListener('focusout', (e) => { if (e.target.matches('input.cell')) saveCell(e.target); });
+  $('contactRows').addEventListener('keydown', (e) => {
+    if (!e.target.matches('input.cell')) return;
+    if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    if (e.key === 'Escape') { state.sig.contacts = ''; renderTable(); }
   });
-  document.querySelectorAll('.views .tab').forEach((b) => b.addEventListener('click', () => {
-    document.querySelectorAll('.views .tab').forEach((x) => x.classList.toggle('active', x === b));
-    state.view = b.dataset.view; loadContacts();
-  }));
-  $('stageFilter').addEventListener('change', (e) => { state.stage = e.target.value; loadContacts(); });
-  $('sourceFilter').addEventListener('change', (e) => { state.source = e.target.value; loadContacts(); });
+  $('contactRows').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-addtask]'); if (b) { e.preventDefault(); openQuickTask(Number(b.dataset.addtask)); }
+  });
+  $('statusChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]'); if (!b) return;
+    state.view = b.dataset.view; lsSet('view', state.view); renderTable();
+  });
+  $('channelFilter').addEventListener('change', (e) => { state.channel = e.target.value; renderTable(); });
+  $('sourceFilter').addEventListener('change', (e) => { state.source = e.target.value; renderTable(); });
   let searchTimer;
   $('search').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { state.q = e.target.value.trim(); loadContacts(); }, 250);
+    searchTimer = setTimeout(() => { state.q = e.target.value.trim(); renderTable(); }, 150);
   });
+  // Quick add: one line per lead, Enter to save, focus stays for the next one.
+  $('quickAdd').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData($('quickAdd')));
+    if (!body.business.trim() && !body.name.trim() && !body.phone.trim()) { toast('Add a business, owner or phone.'); return; }
+    body.stage = state.me.prospectStages[0];
+    try {
+      const { contact } = await api('/api/contacts', { method: 'POST', body });
+      lsSet('qaChannel', body.channel || '');
+      const ch = $('qaChannel').value; $('quickAdd').reset(); $('qaChannel').value = ch;
+      $('quickAdd').querySelector('[name=business]').focus();
+      toast(`Added ${displayName(contact)}.`);
+      if (!['prospects', 'New'].includes(state.view)) state.view = 'prospects';
+      state.sig.contacts = ''; await loadContacts();
+    } catch (err) { toast(err.message); }
+  });
+  $('pasteListBtn').addEventListener('click', () => $('importBtn').click());
 
   // ---------- contact record ----------
   async function openContact(id) {
@@ -575,7 +675,7 @@
     const i = state.navIds.indexOf(id);
     $('recNav').hidden = i < 0;
     $('backBtn').href = '#' + state.navFrom;
-    $('backBtn').innerHTML = '&#8592; ' + esc({ pipeline: 'Pipeline', tasks: 'Tasks', home: 'Home' }[state.navFrom] || 'Contacts');
+    $('backBtn').innerHTML = '&#8592; ' + esc({ deals: 'Deals', tasks: 'Tasks', home: 'Home' }[state.navFrom] || 'Prospects');
     if (i < 0) return;
     $('recPos').textContent = `${i + 1} of ${state.navIds.length}`;
     $('recPrev').disabled = i === 0; $('recNext').disabled = i === state.navIds.length - 1;
@@ -611,18 +711,22 @@
     $('fValue').value = c.value ?? ''; $('fHot').checked = Boolean(c.hot); $('fNext').value = c.next_step || '';
     $('fLost').value = c.lost_reason || ''; $('fDeadline').value = c.deadline || '';
     $('lostWrap').hidden = c.stage !== 'Lost'; $('deadlineWrap').hidden = c.stage !== 'In build';
-    const board = state.me.stages.filter((s) => s !== 'Lost' && s !== 'LTO');
+    // Progress bar: the prospect steps before Interested, or the deal steps after it.
+    const deal = isDeal(c.stage);
+    const board = deal ? state.me.dealStages.filter((s) => s !== 'Lost') : state.me.prospectStages.filter((s) => !DEAD.includes(s));
     const idx = board.indexOf(c.stage);
+    $('dealHead').textContent = deal ? 'Deal' : 'Prospect';
+    $('toDealsBtn').hidden = deal;
     $('stageBar').innerHTML = board.map((s, i) => `<button type="button" class="sb ${i <= idx ? 'on' : ''} ${i === idx ? 'cur' : ''}" data-stage="${esc(s)}" title="${esc(s)}"></button>`).join('')
-      + `<span class="sb-label">${c.stage === 'LTO' ? 'LTO' : c.stage === 'Lost' ? 'Lost' + (c.lost_reason ? ': ' + esc(c.lost_reason) : '') : `Step ${idx + 1} of ${board.length}`}</span>`;
-    const early = ['Prospects', 'Attempt to connect', 'LTO', 'Lost'].includes(c.stage);
+      + `<span class="sb-label">${idx < 0 ? esc(c.stage) + (c.stage === 'Lost' && c.lost_reason ? ': ' + esc(c.lost_reason) : '') : `${esc(c.stage)} · ${idx + 1} of ${board.length}`}</span>`;
+    const early = !deal && c.stage !== 'Not interested';
     $('touchText').textContent = early
-      ? (c.touches ? `${c.touches} of ${state.me.maxTouches} touches sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet')
+      ? (c.touches ? `${c.touches} of ${state.me.maxTouches} messages sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet')
       : (c.last_touch ? `Last touch ${shortDate(c.last_touch)}` : 'Log a touch when you reach out');
     $('igBtn').classList.toggle('disabled', !c.instagram); $('igBtn').href = c.instagram ? igUrl(c.instagram) : '#';
     $('mailBtn').classList.toggle('disabled', !c.email); $('mailBtn').href = c.email ? `mailto:${c.email}` : '#';
     $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone || '';
-    $('fEmail').value = c.email; $('fWebsite').value = c.website; $('fInstagram').value = c.instagram; $('fSource').value = c.source || ''; $('fNotes').value = c.notes;
+    $('fEmail').value = c.email; $('fWebsite').value = c.website; $('fInstagram').value = c.instagram; $('fSource').value = c.source || ''; $('fChannel').value = c.channel || ''; $('fNotes').value = c.notes;
     $('optedOutBanner').hidden = !c.opted_out;
     const locked = !c.opt_in_at && !c.opted_out && Boolean(c.phone);
     $('optInForm').hidden = !locked;
@@ -647,6 +751,7 @@
   $('qaText').addEventListener('click', () => { setTab('texts'); if (!$('msgInput').disabled) $('msgInput').focus(); });
   $('igBtn').addEventListener('click', (e) => { if ($('igBtn').classList.contains('disabled')) { e.preventDefault(); toast('No Instagram handle yet.'); } });
   $('mailBtn').addEventListener('click', (e) => { if ($('mailBtn').classList.contains('disabled')) { e.preventDefault(); toast('No email yet.'); } });
+  $('toDealsBtn').addEventListener('click', () => { $('fStage').value = 'Interested'; saveField('stage', 'Interested'); });
   $('stageBar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-stage]'); if (!b || !state.current || b.dataset.stage === state.current.stage) return;
     $('fStage').value = b.dataset.stage; saveField('stage', b.dataset.stage);
@@ -721,7 +826,7 @@
   }
 
   // Autosave contact fields.
-  const fieldMap = { fStage: 'stage', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fSource: 'source', fNotes: 'notes' };
+  const fieldMap = { fChannel: 'channel', fStage: 'stage', fValue: 'value', fNext: 'next_step', fLost: 'lost_reason', fDeadline: 'deadline', fName: 'name', fBusiness: 'business', fPhone: 'phone', fEmail: 'email', fWebsite: 'website', fInstagram: 'instagram', fSource: 'source', fNotes: 'notes' };
   async function saveField(key, value) {
     if (!state.current) return;
     $('saveState').textContent = 'Saving…';
@@ -739,7 +844,7 @@
     const gone = state.current.id;
     await api(`/api/contacts/${gone}`, { method: 'DELETE', body: {} });
     state.cache.delete(gone); state.navIds = state.navIds.filter((x) => x !== gone);
-    state.current = null; location.hash = state.navFrom || 'contacts';
+    state.current = null; location.hash = state.navFrom || 'prospects';
   });
 
   // ---------- opt-in + texting ----------
@@ -821,8 +926,8 @@
     const { contacts } = await api('/api/pipeline');
     state.pipeline = contacts;
     const f = state.queueFilter; const t = today();
-    let q = contacts.filter((c) => c.phone && c.stage !== 'Closed won + site live');
-    if (f === 'tasks') q = q.filter((c) => c.task_due && c.task_due <= t && c.stage !== 'Lost');
+    let q = contacts.filter((c) => c.phone && c.stage !== 'Closed / Site live');
+    if (f === 'tasks') q = q.filter((c) => c.task_due && c.task_due <= t && !['Lost', 'Not interested'].includes(c.stage));
     else if (f !== 'all') q = q.filter((c) => c.stage === f);
     q.sort((a, b) => (b.hot - a.hot) || String(a.task_due || '9999').localeCompare(String(b.task_due || '9999')));
     const keep = state.queue[state.qi] && state.queue[state.qi].id;
@@ -860,7 +965,7 @@
     $('dName').textContent = displayName(c);
     $('dSub').textContent = [c.name && c.business ? c.name : '', c.instagram ? '@' + c.instagram : ''].filter(Boolean).join(' · ');
     $('dTags').innerHTML = stagePill(c.stage) + (c.value ? `<span class="tag">${money(c.value)}</span>` : '') + (c.hot ? '<span class="tag hot">Hot</span>' : '')
-      + (['Prospects', 'Attempt to connect'].includes(c.stage) && c.touches ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '');
+      + (['New', 'Messaged', 'No reply'].includes(c.stage) && c.touches ? `<span class="tag">${c.touches}/${state.me.maxTouches} touches</span>` : '');
     $('dPhone').textContent = fmtPhone(c.phone);
     $('dLocal').textContent = 'Call between 8am and 9pm their time';
     $('dOpen').href = '#c/' + c.id;
@@ -948,7 +1053,7 @@
     name: ['name', 'owner', 'owner name', 'contact', 'contact name', 'first name', 'full name'],
     business: ['business', 'business name', 'company', 'company name', 'account'], email: ['email', 'e-mail', 'email address'],
     website: ['website', 'site', 'url', 'web'], instagram: ['instagram', 'ig', 'instagram handle', 'handle', 'instagram url'],
-    stage: ['stage', 'status'], notes: ['notes', 'note', 'comments'], value: ['value', 'deal value', 'price', 'amount'],
+    stage: ['stage', 'status'], channel: ['channel', 'contact method', 'outreach channel', 'via'], notes: ['notes', 'note', 'comments'], value: ['value', 'deal value', 'price', 'amount'],
     source: ['source', 'lead source', 'found on', 'found via'],
     first_contact: ['first contact', 'first contact date', 'first contacted', 'date contacted', 'contacted', 'first touch', 'contact date', 'date'],
   };
@@ -974,7 +1079,7 @@
   }
   $('importBtn').addEventListener('click', () => {
     $('importForm').reset(); $('importResult').textContent = ''; resetImportPreview();
-    if (!$('impStage').options.length) $('impStage').innerHTML = state.me.stages.map((s) => `<option>${esc(s)}</option>`).join('');
+    if (!$('impStage').options.length) $('impStage').innerHTML = stageOptions();
     $('impStage').value = state.me.stages[0];
     $('importDialog').showModal(); $('impText').focus();
   });
@@ -1437,7 +1542,7 @@
     const li = aiLog(`<div class="row between"><b>Here's what I found</b><span class="muted small">Check it, then add</span></div>
       <div class="grid2">${f('business', 'Business', true)}${f('name', 'Contact')}${f('phone', 'Phone')}${f('instagram', 'Instagram')}${f('email', 'Email')}${f('website', 'Website')}${f('trade', 'Trade')}${f('city', 'City', true)}</div>
       <label>Notes<textarea data-k="notes" rows="3">${esc(lead.notes)}</textarea></label>
-      <div class="grid2"><label>Lead source<select data-k="source"><option value="">Not set</option>${(state.me.sources || []).map((x) => `<option ${x === lead.source ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'Prospects' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label style="grid-column:1/-1">Amount ($)<input data-k="value" inputmode="numeric"></label></div>
+      <div class="grid2"><label>Lead source<select data-k="source"><option value="">Not set</option>${(state.me.sources || []).map((x) => `<option ${x === lead.source ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'New' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label style="grid-column:1/-1">Amount ($)<input data-k="value" inputmode="numeric"></label></div>
       ${dupHtml}
       <div class="row end"><button type="button" class="btn small" data-act="skip">Discard</button><button type="button" class="btn primary small" data-act="add">${dups.length ? 'Add anyway' : 'Add to CRM'}</button></div>`, 'ai-card');
     li.addEventListener('click', async (e) => {
@@ -1452,7 +1557,7 @@
         const { contact } = await api('/api/contacts', { method: 'POST', body });
         li.querySelectorAll('input,textarea,select,button').forEach((x) => { x.disabled = true; });
         aiLog(`Added <a href="#c/${contact.id}">${esc(displayName(contact))}</a> to ${esc(contact.stage)}.`, 'ai-msg bot');
-        if (['home', 'pipeline', 'contacts'].includes(state.page)) route();
+        if (['home', 'deals', 'prospects'].includes(state.page)) route();
       } catch (err) { b.disabled = false; aiLog(esc(err.message), 'ai-msg bot err'); }
     });
   }

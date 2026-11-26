@@ -8,7 +8,7 @@ async function tw(path,params,bad){const url=B+path;const data=url+Object.keys(p
 ok((await api('/api/contacts')).status===401,'API needs login');
 ok((await api('/api/login',{method:'POST',body:{password:'wrong'}})).status===401,'wrong password rejected');
 ok((await api('/api/login',{method:'POST',body:{password:'test-pass'}})).status===200 && cookie,'login works');
-const me=await api('/api/me'); ok(me.data.stages.length===8 && me.data.callingReady,'me + stages');
+const me=await api('/api/me'); ok(me.data.stages.length===10 && me.data.prospectStages.join()==='New,Messaged,Replied,No reply,Not interested' && me.data.dealStages.join()==='Interested,Demo,In build,Closed / Site live,Lost' && me.data.channels.includes('WhatsApp') && me.data.callingReady,'me + prospect statuses + deal stages + channels');
 const c=await api('/api/contacts',{method:'POST',body:{phone:'(555) 201-3344',name:'Mike',business:'Mike Roofing'}}); ok(c.status===201 && c.data.contact.phone==='+15552013344','create contact normalizes phone');
 ok((await api('/api/contacts',{method:'POST',body:{phone:'555-201-3344'}})).status===409,'duplicate blocked');
 const id=c.data.contact.id;
@@ -76,10 +76,10 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   ok((await api('/api/contacts',J({}))).status===400,'empty contact rejected');
   const pid=p.data.contact.id;
   ok((await api(`/api/contacts/${pid}/messages`,J({body:'hi'}))).status===409,'cannot text without a phone');
-  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.next_follow_up===null,'touch 1 -> Attempt to connect, no follow-up date');
+  let r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Messaged' && r.data.contact.next_follow_up===null,'touch 1 -> Messaged, no follow-up date');
   for (let i=0;i<3;i++) r=await api(`/api/contacts/${pid}/touch`,J({today:'2026-11-22'}));
-  ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='No response' && r.data.contact.next_follow_up===null,'4 touches with no reply -> Lost, no follow-up date');
-  r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Connected' && r.data.contact.touches===0,'replied -> Connected');
+  ok(r.data.contact.stage==='No reply' && r.data.contact.next_follow_up===null,'4 touches with no reply -> No reply, no follow-up date');
+  r=await api(`/api/contacts/${pid}/replied`,J({today:'2026-11-22'})); ok(r.data.contact.stage==='Replied' && r.data.contact.touches===0,'replied -> Replied');
   let tk=await api(`/api/tasks?contact=${pid}`); ok(!tk.data.tasks.some(t=>t.title==='Send the demo link'),'stage change adds no automatic task');
   r=await api(`/api/contacts/${pid}`,{method:'PATCH',body:{stage:'In build',value:'$1,200',hot:true,today:'2026-11-22'}});
   ok(r.data.contact.value===1200 && r.data.contact.hot===1 && r.data.contact.deadline==='2026-11-29','In build sets value, hot and 7 day deadline');
@@ -100,7 +100,7 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
 
 { const J=(b)=>({method:'POST',body:b});
   const c=await api('/api/contacts',J({phone:'5554443322',business:'Dial Test'})); const id=c.data.contact.id;
-  let r=await api(`/api/contacts/${id}/disposition`,J({outcome:'no_answer',today:'2026-11-22'})); ok(r.data.contact.stage==='Attempt to connect' && r.data.contact.touches===1,'dialer no answer = touch');
+  let r=await api(`/api/contacts/${id}/disposition`,J({outcome:'no_answer',today:'2026-11-22'})); ok(r.data.contact.stage==='Messaged' && r.data.contact.touches===1,'dialer no answer = touch');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'interested',note:'wants demo',today:'2026-11-22'})); ok(r.data.contact.stage==='Interested' && r.data.contact.next_follow_up===null,'dialer interested moves stage');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'callback',callback:'2026-11-25',today:'2026-11-22'}));
   { const t=await api(`/api/tasks?contact=${id}`); ok(t.data.tasks.some(x=>x.title==='Call back' && x.due==='2026-11-25' && !x.done),'call back later -> task with that date'); }
@@ -109,10 +109,23 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
   const tl=await api(`/api/contacts/${id}/timeline`); ok(tl.data.items.filter(i=>i.type==='activity').length===4,'activities on timeline');
   const st=await api('/api/stats?today='+new Date().toISOString().slice(0,10)); ok(st.data.dials_today>=2,'dials counted');
   r=await api(`/api/contacts/${id}/disposition`,J({outcome:'not_interested',today:'2026-11-22'})); ok(r.data.contact.stage==='Lost' && r.data.contact.lost_reason==='Not interested','not interested -> Lost'); }
-{ const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400,'assistant asks for a screenshot or text'); }
+{ const r=await api('/api/assistant/extract',{method:'POST',body:{}}); ok(r.status===400||r.status===503,'assistant asks for a screenshot or text (or an AI engine)'); }
+{ // Prospects vs deals: channel field, Not interested on a prospect stays a prospect, on a deal it's Lost.
+  const J=(b)=>({method:'POST',body:b});
+  const p=await api('/api/contacts',J({business:'WA Roofing',phone:'5553330001',channel:'WhatsApp'})); ok(p.data.contact.stage==='New' && p.data.contact.channel==='WhatsApp','new prospect is New with a channel');
+  ok((await api(`/api/contacts/${p.data.contact.id}`,{method:'PATCH',body:{channel:'fb'}})).data.contact.channel==='Facebook','channel alias cleaned');
+  ok((await api(`/api/contacts/${p.data.contact.id}`,{method:'PATCH',body:{channel:'carrier pigeon'}})).data.contact.channel==='','unknown channel cleared');
+  let r=await api(`/api/contacts/${p.data.contact.id}/disposition`,J({outcome:'not_interested',today:'2026-11-26'})); ok(r.data.contact.stage==='Not interested','prospect says no -> Not interested');
+  r=await api(`/api/contacts/${p.data.contact.id}/replied`,J({today:'2026-11-26'})); ok(r.data.contact.stage==='Replied','not interested then replies -> Replied');
+  r=await api(`/api/contacts/${p.data.contact.id}`,{method:'PATCH',body:{stage:'Demo',today:'2026-11-26'}}); ok(r.data.contact.stage==='Demo','Demo stage');
+  r=await api(`/api/contacts/${p.data.contact.id}/disposition`,J({outcome:'interested',today:'2026-11-26'})); ok(r.data.contact.stage==='Demo','interested call keeps a Demo deal in Demo');
+  r=await api(`/api/contacts/${p.data.contact.id}`,{method:'PATCH',body:{stage:'Closed / Site live',value:500,today:'2026-11-26'}}); ok(r.data.contact.stage==='Closed / Site live','closed / site live');
+  const st=await api('/api/stats?today=2026-11-26'); ok(st.data.won_value>=500,'won value counts Closed / Site live');
+  const q=await api('/api/contacts',J({business:'Deal No',phone:'5553330002',stage:'Interested'}));
+  r=await api(`/api/contacts/${q.data.contact.id}/disposition`,J({outcome:'not_interested',today:'2026-11-26'})); ok(r.data.contact.stage==='Lost','deal says no -> Lost'); }
 { // Paste-from-sheet import: preview saves nothing, flags duplicates (CRM + same paste) and bad rows, then adds only new rows.
   const rows=[
-    {business:'Peachtree Pest Pros',name:'Dana',phone:'(404) 555-0101',email:'dana@peachpest.com',source:'ZoomInfo',first_contact:'11/20/2026',notes:'Emailed'},
+    {business:'Peachtree Pest Pros',name:'Dana',phone:'(404) 555-0101',email:'dana@peachpest.com',source:'ZoomInfo',channel:'whatsapp',first_contact:'11/20/2026',notes:'Emailed'},
     {business:'Mike Roofing',phone:'404-555-0102'},
     {business:'Peachtree Pest Pros',phone:'404-555-0109'},
     {business:'Bad Number Co',phone:'12'},
@@ -120,16 +133,16 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
     {name:'Instagram Only',instagram:'https://instagram.com/igonly_biz/',source:'instagram'},
   ];
   const before=(await api('/api/contacts')).data.contacts.length;
-  const p=await api('/api/import',{method:'POST',body:{rows,preview:true,stage:'Connected'}});
+  const p=await api('/api/import',{method:'POST',body:{rows,preview:true,stage:'Replied'}});
   ok(p.status===200 && p.data.rows.map(r=>r.status).join()==='new,duplicate,duplicate,error,error,new','import preview statuses');
   ok(p.data.rows[1].match && p.data.rows[1].match.id && /already in CRM/.test(p.data.rows[1].reason),'preview links the existing CRM contact');
   ok(/row 1/.test(p.data.rows[2].reason),'preview catches repeats inside the paste');
   ok(p.data.rows[0].source==='ZoomInfo' && p.data.rows[5].source==='Instagram','ZoomInfo + case-insensitive sources kept');
   ok((await api('/api/contacts')).data.contacts.length===before,'preview saves nothing');
-  const r=await api('/api/import',{method:'POST',body:{rows,stage:'Connected'}});
+  const r=await api('/api/import',{method:'POST',body:{rows,stage:'Replied'}});
   ok(r.data.added===2 && r.data.skipped===4,'import adds only new rows ('+JSON.stringify([r.data.added,r.data.skipped])+')');
   const all=(await api('/api/contacts?q=Peachtree')).data.contacts; const c=all[0];
-  ok(all.length===1 && c.phone==='+14045550101' && c.stage==='Connected' && c.last_touch==='2026-11-20' && c.notes.startsWith('First contact 2026-11-20') && c.source==='ZoomInfo','imported row saved correctly');
+  ok(all.length===1 && c.phone==='+14045550101' && c.stage==='Replied' && c.last_touch==='2026-11-20' && c.notes.startsWith('First contact 2026-11-20') && c.source==='ZoomInfo' && c.channel==='WhatsApp','imported row saved correctly');
   ok((await api('/api/contacts?q=igonly_biz')).data.contacts[0].instagram==='igonly_biz','instagram url cleaned');
   const again=await api('/api/import',{method:'POST',body:{rows,preview:true}}); ok(again.data.rows.filter(x=>x.status==='new').length===0,'re-pasting the same rows finds nothing new');
   ok((await api('/api/import',{method:'POST',body:{rows:[]}})).status===400,'empty import rejected');
