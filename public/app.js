@@ -1635,6 +1635,7 @@
     const dupHtml = dups.length ? `<div class="ai-dup">Already in your CRM: ${dups.map((d) => `<a href="#c/${d.id}">${esc(d.business || d.name || d.instagram || d.phone)}</a> (${esc(d.stage)})`).join(', ')}. Add anyway only if it's a different business.</div>` : '';
     const li = aiLog(`<div class="row between"><b>Here's what I found</b><span class="muted small">Check it, then add</span></div>
       <div class="grid2">${f('business', 'Business', true)}${f('name', 'Contact')}${f('phone', 'Phone')}${f('instagram', 'Instagram')}${f('email', 'Email')}${f('website', 'Website')}${f('trade', 'Trade')}${f('city', 'City', true)}</div>
+      <label>Source link<input data-k="link" value="${esc(lead.link || '')}" placeholder="Paste their Facebook, Yelp, BBB or Google link"></label>
       <label>Notes<textarea data-k="notes" rows="3">${esc(lead.notes)}</textarea></label>
       <div class="grid2"><label>Lead source<select data-k="source"><option value="">Not set</option>${(state.me.sources || []).map((x) => `<option ${x === lead.source ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label><label>Stage<select data-k="stage">${state.me.stages.map((s) => `<option ${s === 'New' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label><label style="grid-column:1/-1">Amount ($)<input data-k="value" inputmode="numeric"></label></div>
       ${dupHtml}
@@ -1644,7 +1645,7 @@
       if (b.dataset.act === 'skip') { li.remove(); aiLog('Discarded.', 'ai-msg bot'); return; }
       const v = Object.fromEntries([...li.querySelectorAll('[data-k]')].map((x) => [x.dataset.k, x.value.trim()]));
       const head = [v.trade, v.city].filter(Boolean).join(' · ');
-      const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, email: v.email, website: v.website, source: v.source,
+      const body = { business: v.business, name: v.name, phone: v.phone, instagram: v.instagram, link: v.link, email: v.email, website: v.website, source: v.source,
         stage: v.stage, value: v.value, notes: [head, v.notes, 'Added by the lead assistant ' + today()].filter(Boolean).join('\n') };
       b.disabled = true;
       try {

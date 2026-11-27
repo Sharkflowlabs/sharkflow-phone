@@ -839,7 +839,7 @@ async function logTouchFor(db, c, today, note) {
       .bind(touches, today, stage, reason, follow, stage, today, notes, nowIso(), nowIso(), c.id).first();
 }
 
-const LEAD_FIELDS = ['business', 'name', 'phone', 'email', 'website', 'instagram', 'trade', 'city', 'notes', 'source'];
+const LEAD_FIELDS = ['business', 'name', 'phone', 'email', 'website', 'instagram', 'link', 'trade', 'city', 'notes', 'source'];
 const LEAD_SCHEMA = {
   type: 'object',
   properties: {
@@ -849,6 +849,7 @@ const LEAD_SCHEMA = {
     email: { type: 'string' },
     website: { type: 'string', description: 'Website domain or URL, not an Instagram link' },
     instagram: { type: 'string', description: 'Instagram handle without @' },
+    link: { type: 'string', description: 'Full URL of the profile or listing the lead came from (Facebook page, Yelp, BBB, Google Maps, Nextdoor...), only if a URL is visible or pasted; not the website or Instagram' },
     trade: { type: 'string', description: 'What they do, e.g. Roofing, House painting' },
     city: { type: 'string', description: 'City and state or region' },
     notes: { type: 'string', description: 'One or two short lines useful for a website sales pitch: rating and review count, whether they have a website, services, anything notable' },
@@ -887,6 +888,9 @@ async function extractLead(env, body) {
   const lead = {};
   for (const f of LEAD_FIELDS) lead[f] = String((data && data[f]) || '').trim().slice(0, f === 'notes' ? 1000 : 300);
   lead.instagram = igHandle(lead.instagram) || lead.instagram.replace(/^@/, '');
+  // Fall back to a Facebook/Yelp/BBB/Google link pasted in the text box if the model missed it.
+  lead.link = cleanLinks(lead.link || '')[0] || cleanLinks(text).find((u) => linkSource(u) && linkSource(u) !== 'Instagram') || '';
+  if (!lead.source && lead.link) lead.source = linkSource(lead.link);
   lead.source = cleanSource(lead.source);
   lead.phone_normalized = normalizePhone(lead.phone);
   return lead;
