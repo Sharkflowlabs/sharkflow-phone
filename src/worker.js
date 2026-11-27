@@ -100,6 +100,44 @@ export function igHandle(raw) {
   return /^[A-Za-z0-9._]{1,30}$/.test(s) ? s.toLowerCase() : '';
 }
 
+// Profile links: Facebook, Yelp, BBB, Google, ... stored one URL per line.
+const LINK_SOURCES = [[/facebook\.com|fb\.com|fb\.me/, 'Facebook'], [/instagram\.com/, 'Instagram'], [/yelp\.|yelp\.to/, 'Yelp'],
+  [/bbb\.org/, 'BBB'], [/google\.|goo\.gl|g\.page/, 'Google Maps']];
+export function linkSource(url) {
+  const u = String(url || '').toLowerCase();
+  const hit = LINK_SOURCES.find(([re]) => re.test(u));
+  return hit ? hit[1] : '';
+}
+// Splits pasted text into clean, de-duplicated http(s) URLs. "yelp.com/biz/x" gets https:// added.
+export function cleanLinks(raw) {
+  const out = [];
+  for (let t of String(raw || '').split(/[\s,]+/)) {
+    t = t.trim().replace(/[)\].;]+$/, '');
+    if (!t) continue;
+    if (!/^https?:\/\//i.test(t)) { if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/|$)/i.test(t)) continue; t = 'https://' + t; }
+    try { const u = new URL(t); if (!/^https?:$/.test(u.protocol)) continue; t = u.href; } catch { continue; }
+    if (t.length <= 500 && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out.slice(0, 20);
+}
+// Sorts a body's instagram/links input: Instagram URLs become the handle, any other link goes to links.
+function splitLinks(body, currentIg = '') {
+  const links = 'links' in body ? cleanLinks(body.links) : null;
+  let instagram = 'instagram' in body ? String(body.instagram ?? '').trim() : null;
+  const extra = [];
+  if (instagram !== null && instagram && !igHandle(instagram)) {
+    extra.push(...cleanLinks(instagram)); instagram = '';
+  } else if (instagram !== null) instagram = igHandle(instagram);
+  const all = [...(links || []), ...extra];
+  const keep = [];
+  for (const l of all) {
+    const h = /instagram\.com/i.test(l) ? igHandle(l) : '';
+    if (h) { if (!instagram && !currentIg) instagram = h; else if (h !== (instagram || currentIg)) keep.push(l); }
+    else keep.push(l);
+  }
+  return { instagram, links: links === null && !extra.length ? null : keep, extra: links === null };
+}
+
 export function normalizePhone(raw) {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -245,7 +283,7 @@ async function handleApi(request, env, url) {
 
   if (path === '/api/pipeline' && method === 'GET') {
     const { results } = await db.prepare(`
-      SELECT c.id, c.name, c.business, c.phone, c.email, c.website, c.instagram, c.source, c.channel, c.stage, c.value, c.hot, c.touches, c.last_touch, c.next_step,
+      SELECT c.id, c.name, c.business, c.phone, c.email, c.website, c.instagram, c.links, c.source, c.channel, c.stage, c.value, c.hot, c.touches, c.last_touch, c.next_step,
         c.stage_since, c.deadline, c.lost_reason, c.unread, c.last_activity_at, c.created_at,
         t.id AS task_id, t.title AS task_title, t.due AS task_due,
         (SELECT COUNT(*) FROM tasks WHERE contact_id = c.id AND done = 0) AS open_tasks
@@ -271,7 +309,7 @@ async function handleApi(request, env, url) {
   }
 
   if (path === '/api/prospects' && method === 'POST') {
-    // Paste a list of Instagram links or handles (one per line, optional "name" after a comma or tab).
+    // Paste a list of Instagram handles or profile links (Facebook, Yelp, BBB...; one per line, optional "name" after a comma or tab).
     const { lines, stage } = await readJson(request);
     if (!Array.isArray(lines) || lines.length > 500) throw new HttpError(400, 'Send 1 to 500 lines');
     const st = STAGES.includes(stage) ? stage : FIRST;
@@ -280,7 +318,16 @@ async function handleApi(request, env, url) {
     for (const line of lines) {
       const [first, ...rest] = String(line).split(/[,\t]/);
       const handle = igHandle(first);
-      if (!handle) { skipped++; continue; }
+      const link = handle ? '' : (cleanLinks(first)[0] || '');
+      if (!handle && !link) { skipped++; continue; }
+      if (link) {
+        // A Facebook, Yelp, BBB, Google... link: the name after the comma, or the link itself.
+        const dupe = await db.prepare("SELECT 1 FROM contacts WHERE ('\n' || lower(links) || '\n') LIKE ?").bind('%\n' + link.toLowerCase() + '\n%').first();
+        if (dupe) { skipped++; continue; }
+        await db.prepare('INSERT INTO contacts (business, links, stage, stage_since, source) VALUES (?, ?, ?, ?, ?)')
+          .bind(rest.join(' ').trim().slice(0, 200), link, st, today, linkSource(link) || 'Other').run();
+        added++; continue;
+      }
       const exists = await db.prepare('SELECT 1 FROM contacts WHERE lower(instagram) = ?').bind(handle).first();
       if (exists) { skipped++; continue; }
       await db.prepare('INSERT INTO contacts (name, instagram, stage, stage_since, source) VALUES (?, ?, ?, ?, \'Instagram\')')
@@ -459,9 +506,9 @@ async function handleApi(request, env, url) {
     if (source === '(none)') where.push("c.source = ''");
     else if (source) { where.push('c.source = ?'); args.push(source); }
     if (q) {
-      where.push('(c.name LIKE ? OR c.business LIKE ? OR c.phone LIKE ? OR c.notes LIKE ? OR c.instagram LIKE ? OR c.email LIKE ?)');
+      where.push('(c.name LIKE ? OR c.business LIKE ? OR c.phone LIKE ? OR c.notes LIKE ? OR c.instagram LIKE ? OR c.email LIKE ? OR c.links LIKE ?)');
       const like = `%${q}%`;
-      args.push(like, like, like, like, like, like);
+      args.push(like, like, like, like, like, like, like);
     }
     if (view === 'due') { where.push('EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id = c.id AND t.done = 0 AND t.due IS NOT NULL AND t.due <= ?)'); args.push(today); }
     if (view === 'unread') where.push('c.unread > 0');
@@ -518,12 +565,25 @@ async function handleApi(request, env, url) {
     if (method === 'PATCH') {
       const body = await readJson(request);
       const today = todayFrom(body.today);
-      const before = await db.prepare('SELECT stage FROM contacts WHERE id = ?').bind(id).first();
+      const before = await db.prepare('SELECT stage, source FROM contacts WHERE id = ?').bind(id).first();
       if (!before) throw new HttpError(404, 'Not found');
-      if ('instagram' in body) body.instagram = igHandle(body.instagram) || String(body.instagram || '').trim();
+      if ('instagram' in body || 'links' in body) {
+        const cur = await db.prepare('SELECT instagram, links FROM contacts WHERE id = ?').bind(id).first();
+        const sp = splitLinks(body, 'instagram' in body ? '' : cur.instagram);
+        if (sp.instagram !== null) body.instagram = sp.instagram;
+        if (sp.links !== null) {
+          // Links typed into the Instagram box are added to the existing list; a links edit replaces it.
+          const base = sp.extra ? cleanLinks(cur.links) : [];
+          body.links = cleanLinks([...base, ...sp.links].join('\n')).join('\n');
+        }
+        if (!('source' in body) && !before.source) {
+          const src = linkSource(String(body.links || '')) || (body.instagram ? 'Instagram' : '');
+          if (src) body.source = src;
+        }
+      }
       if ('source' in body) body.source = cleanSource(body.source);
       if ('channel' in body) body.channel = cleanChannel(body.channel);
-      const fields = ['channel', 'name', 'business', 'email', 'website', 'instagram', 'source', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
+      const fields = ['channel', 'name', 'business', 'email', 'website', 'instagram', 'links', 'source', 'next_follow_up', 'deadline', 'last_touch', 'notes', 'next_step', 'lost_reason'];
       const sets = [];
       const args = [];
       for (const f of fields) {
@@ -739,18 +799,21 @@ async function createContact(db, body) {
   const phone = hasPhone ? normalizePhone(body.phone) : null;
   if (hasPhone && !phone) throw new HttpError(400, 'Phone number not recognized. Use +countrycode for non-US numbers.');
   const s = (v) => String(v ?? '').trim().slice(0, 5000);
-  const instagram = igHandle(body.instagram) || s(body.instagram);
-  if (!phone && !instagram && !s(body.email) && !s(body.name) && !s(body.business)) {
-    throw new HttpError(400, 'Add at least a phone, Instagram, email or name');
+  const sp = splitLinks({ instagram: body.instagram ?? '', links: [body.links, body.link].filter(Boolean).join('\n') });
+  const instagram = sp.instagram || '';
+  const links = (sp.links || []).join('\n');
+  if (!phone && !instagram && !links && !s(body.email) && !s(body.name) && !s(body.business)) {
+    throw new HttpError(400, 'Add at least a phone, Instagram, link, email or name');
   }
   const stage = STAGES.includes(body.stage) ? body.stage : FIRST;
   const followUp = null; // follow-up dates are retired; use tasks
   const value = body.value === undefined || body.value === '' || body.value === null ? null : Math.round(Number(String(body.value).replace(/[$,]/g, ''))) || null;
   try {
-    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, stage, next_follow_up, notes, value, next_step, stage_since, source, channel)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
-      .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), instagram, stage, followUp, s(body.notes),
-        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10), cleanSource(body.source), cleanChannel(body.channel))
+    return await db.prepare(`INSERT INTO contacts (name, business, phone, email, website, instagram, links, stage, next_follow_up, notes, value, next_step, stage_since, source, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+      .bind(s(body.name), s(body.business), phone, s(body.email), s(body.website), instagram, links, stage, followUp, s(body.notes),
+        value, s(body.next_step).slice(0, 300), nowIso().slice(0, 10),
+        cleanSource(body.source) || linkSource(links) || (instagram && !phone ? 'Instagram' : ''), cleanChannel(body.channel))
       .first();
   } catch (e) {
     if (String(e).includes('UNIQUE')) throw new HttpError(409, 'A contact with that number already exists');
@@ -1005,7 +1068,7 @@ async function draftMessage(env, db, body) {
   ].sort().map((l) => l.slice(0, 700));
   const record = [
     `Business: ${c.business || '-'}`, `Contact name: ${c.name || '-'}`, `Email: ${c.email || '-'}`, `Phone: ${c.phone || '-'}`,
-    `Website: ${c.website || '-'}`, `Instagram: ${c.instagram ? '@' + c.instagram : '-'}`, `Lead source: ${c.source || '-'}`,
+    `Website: ${c.website || '-'}`, `Instagram: ${c.instagram ? '@' + c.instagram : '-'}`, `Links: ${(c.links || '').split('\n').filter(Boolean).join(', ') || '-'}`, `Lead source: ${c.source || '-'}`,
     `Pipeline stage: ${c.stage}`, `Deal value: ${c.value ? '$' + c.value : '-'}`, `Next step: ${c.next_step || '-'}`,
     `Outreach touches with no reply: ${c.touches || 0}`, `Texting opt-in: ${c.opt_in_at ? 'yes, ' + c.opt_in_at : 'no'}`,
     `Notes:\n${(c.notes || '-').slice(0, 3000)}`,

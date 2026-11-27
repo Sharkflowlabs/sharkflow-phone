@@ -149,3 +149,16 @@ ok((await fetch(B+'/vendor/twilio.min.js')).status===200,'voice sdk served');
 }
 { const me=await api('/api/me'); ok(me.data.senderEmail==='hello@sharkflowlabs.com','sender email for Gmail drafts');
   const r=await api('/api/assistant/draft',{method:'POST',body:{contact_id:1,channel:'email',instructions:''}}); ok(r.status===400||r.status===503,'draft needs instructions (or an AI engine)'); }
+{ // Source links: Facebook typed in the Instagram box moves to links, IG links become the handle, sources fill in.
+  let r=await api('/api/contacts',{method:'POST',body:{business:'GA Painting Test',instagram:'https://www.facebook.com/profile.php?id=61592348535146'}});
+  let c=r.data.contact; ok(c.instagram==='' && c.links==='https://www.facebook.com/profile.php?id=61592348535146' && c.source==='Facebook','facebook link in IG box goes to links + source Facebook');
+  r=await api(`/api/contacts/${c.id}`,{method:'PATCH',body:{links:c.links+'\nyelp.com/biz/ga-painting\nhttps://instagram.com/gapainting/\nnot a link',today:'2026-11-27'}});
+  c=r.data.contact; ok(c.instagram==='gapainting' && c.links==='https://www.facebook.com/profile.php?id=61592348535146\nhttps://yelp.com/biz/ga-painting','links cleaned, IG link becomes handle ('+JSON.stringify([c.instagram,c.links])+')');
+  r=await api(`/api/contacts/${c.id}`,{method:'PATCH',body:{instagram:'https://www.bbb.org/us/x',today:'2026-11-27'}});
+  ok(r.data.contact.links.split('\n').length===3 && r.data.contact.instagram==='','link typed in IG box is added to links');
+  ok((await api('/api/contacts?q=ga-painting')).data.contacts.length===1,'search finds links');
+  r=await api('/api/contacts',{method:'POST',body:{business:'Quick Link Co',link:'https://yelp.com/biz/quick-link'}});
+  ok(r.data.contact.links==='https://yelp.com/biz/quick-link' && r.data.contact.source==='Yelp','quick add link sets Yelp source');
+  r=await api('/api/prospects',{method:'POST',body:{lines:['https://www.facebook.com/bestpaintco, Best Paint Co','https://www.facebook.com/bestpaintco']}});
+  ok(r.data.added===1 && r.data.skipped===1,'paste a list takes facebook links and skips repeats');
+}

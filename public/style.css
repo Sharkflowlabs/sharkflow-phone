@@ -673,7 +673,8 @@ input, select, textarea { background: var(--panel); }
 .subnav a:not(.active) .pill-n:not(:empty) { background: var(--gold); }
 
 /* ===== Prospects sheet ===== */
-.quick-add { display: grid; grid-template-columns: auto 1.4fr 1fr 1fr .9fr 1.6fr auto; gap: 8px; align-items: center; padding: 10px 12px; margin-bottom: 12px; }
+.quick-add { display: grid; grid-template-columns: auto 1.3fr 1fr 1fr 1.2fr .9fr 1.3fr auto; gap: 8px; align-items: center; padding: 10px 12px; margin-bottom: 12px; }
+.quick-add input, .quick-add select { min-width: 0; }
 .qa-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gold-ink); padding: 0 4px; }
 .sheet-page .table-tools { align-items: flex-start; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -762,3 +763,25 @@ input, select, textarea { background: var(--panel); }
 .sheet th { background: #0d0d0f; }
 .sheet .c-n { background: #0d0d0f; }
 .mini:hover, .fu:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ---------- source links (Facebook, IG, BBB, Yelp, ...) ---------- */
+.rec-links{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:8px}
+.rec-links:empty{display:none}
+.links-box{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px}
+.links-lbl{font-size:13px;font-weight:600;color:var(--muted)}
+.link-chips{display:flex;flex-wrap:wrap;gap:6px}
+.lchip{display:inline-flex;align-items:center;border:1px solid var(--line-2);background:var(--panel-2);border-radius:999px;font-size:12.5px;font-weight:600;overflow:hidden}
+.lchip a{color:var(--text);text-decoration:none;padding:4px 10px}
+.lchip a:hover{color:var(--accent)}
+.lchip button{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:4px 9px 4px 2px;font-size:14px;line-height:1}
+.lchip button:hover{color:var(--bad)}
+.lchip.lk-facebook{border-color:#3b5998}.lchip.lk-instagram{border-color:#b04a8c}.lchip.lk-yelp{border-color:#c4352b}
+.lchip.lk-bbb{border-color:#2a6fb0}.lchip.lk-google{border-color:#3a8f5a}
+.link-add{display:flex;gap:6px}
+.link-add input{flex:1;min-width:0}
+.src-wrap{display:flex;align-items:center;gap:4px}
+.src-wrap select{flex:1;min-width:0}
+.mini.src-open{flex:none}
+.mini.src-add{flex:none;font-size:11px;white-space:nowrap;opacity:.7}
+.mini.src-add:hover{opacity:1}
+.cell.link-cell{min-width:150px}

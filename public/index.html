@@ -9,7 +9,7 @@
   <title>Sharkflow CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap">
-  <link rel="stylesheet" href="/style.css?v=5">
+  <link rel="stylesheet" href="/style.css?v=6">
 </head>
 <body>
   <!-- Login -->
@@ -64,9 +64,9 @@
           </section>
           <section class="card">
             <div class="card-head"><h2>Add prospects</h2></div>
-            <p class="muted">Paste Instagram links or @handles, one per line. Add a name after a comma.</p>
+            <p class="muted">Paste Instagram, Facebook, Yelp, BBB or Google links (or @handles), one per line. Add a name after a comma.</p>
             <form id="prospectForm" class="prospect-form">
-              <textarea id="prospectLines" rows="5" placeholder="https://instagram.com/acmeroofing, Acme Roofing&#10;@bestpaintersla"></textarea>
+              <textarea id="prospectLines" rows="5" placeholder="https://instagram.com/acmeroofing, Acme Roofing&#10;https://www.facebook.com/gapainting, GA Painting&#10;@bestpaintersla"></textarea>
               <div class="row end"><span id="prospectResult" class="muted"></span><button class="btn primary" type="submit">Add to Prospects</button></div>
             </form>
           </section>
@@ -205,6 +205,7 @@
           <input name="business" placeholder="Business" aria-label="Business">
           <input name="name" placeholder="Owner" aria-label="Owner">
           <input name="phone" type="tel" placeholder="Phone / WhatsApp" aria-label="Phone">
+          <input name="link" placeholder="Source link (FB, IG, Yelp…)" aria-label="Source link">
           <select name="channel" id="qaChannel" aria-label="Channel"></select>
           <input name="notes" placeholder="Note (optional)" aria-label="Note">
           <button class="btn primary" type="submit">Add</button>
@@ -231,7 +232,7 @@
               <tbody id="contactRows"></tbody>
             </table>
           </div>
-          <p class="muted small sheet-help">Click a cell to edit it; it saves when you leave the cell. Notes shows the latest line (all notes are on the record). <b>+1</b> logs a message sent (moves New to Messaged). Pick <b>Interested</b> to move a lead to Deals. Tick rows (Shift-click for a range) to delete in bulk.</p>
+          <p class="muted small sheet-help">Click a cell to edit it; it saves when you leave the cell. <b>↗</b> next to Source opens their Facebook, IG, Yelp or BBB page; <b>+ link</b> adds one. Notes shows the latest line (all notes are on the record). <b>+1</b> logs a message sent (moves New to Messaged). Pick <b>Interested</b> to move a lead to Deals. Tick rows (Shift-click for a range) to delete in bulk.</p>
         </div>
       </section>
 
@@ -284,6 +285,7 @@
               <span class="avatar lg" id="rAvatar"></span>
               <h1 id="cName"></h1>
               <div class="muted" id="cSub"></div>
+              <div class="rec-links" id="recLinks"></div>
               <div class="quick">
                 <button class="qa" id="qaNote" title="Note"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zM8 11h8M8 15h8M8 7h5"/></svg><span>Note</span></button>
                 <button class="qa" id="qaText" title="Text"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H8l-4 4z"/></svg><span>Text</span></button>
@@ -299,7 +301,12 @@
               <label>Phone<input id="fPhone" type="tel"></label>
               <label>Email<input id="fEmail" type="email"></label>
               <label>Website<input id="fWebsite"></label>
-              <label>Instagram<input id="fInstagram"></label>
+              <label>Instagram handle<input id="fInstagram" placeholder="@handle"></label>
+              <div class="links-box">
+                <span class="links-lbl">Source links</span>
+                <div class="link-chips" id="linkChips"></div>
+                <div class="link-add"><input id="linkInput" placeholder="Paste a Facebook, Yelp, BBB or Google link" aria-label="Add a source link"><button type="button" class="btn small" id="linkAddBtn">Add</button></div>
+              </div>
               <label>Lead source<select id="fSource"><option value="">Not set</option></select></label>
               <label>Channel<select id="fChannel"><option value="">Not set</option></select></label>
               <label>Notes<textarea id="fNotes" rows="4"></textarea></label>
@@ -448,7 +455,7 @@
       <p class="muted">Fill in at least one way to reach them. A phone is only needed to call or text.</p>
       <label>Business<input name="business"></label>
       <label>Contact name<input name="name"></label>
-      <label>Instagram<input name="instagram" placeholder="@handle or link"></label>
+      <label>Instagram or source link<input name="instagram" placeholder="@handle, or a Facebook / Yelp / BBB link"></label>
       <label>Phone<input name="phone" type="tel" placeholder="(555) 123-4567 or +61…"></label>
       <label>Email<input name="email" type="email"></label>
       <div class="optin-grid">
@@ -517,6 +524,6 @@
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="/vendor/twilio.min.js" defer></script>
-  <script src="/app.js?v=5" defer></script>
+  <script src="/app.js?v=6" defer></script>
 </body>
 </html>

@@ -26,6 +26,27 @@
   const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
   const shortDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
   const igUrl = (h) => h ? (/^https?:/.test(h) ? h : `https://instagram.com/${h.replace(/^@/, '')}`) : '';
+  // Source links: one URL per line in c.links, plus the Instagram handle.
+  const LINK_NAMES = [[/facebook\.com|fb\.com|fb\.me/, 'Facebook'], [/instagram\.com/, 'Instagram'], [/yelp\./, 'Yelp'], [/bbb\.org/, 'BBB'],
+    [/google\.|goo\.gl|g\.page/, 'Google'], [/nextdoor\./, 'Nextdoor'], [/angi\.com|angieslist/, 'Angi'], [/thumbtack\./, 'Thumbtack'],
+    [/homeadvisor\./, 'HomeAdvisor'], [/houzz\./, 'Houzz'], [/tiktok\./, 'TikTok'], [/linkedin\./, 'LinkedIn'], [/youtube\.|youtu\.be/, 'YouTube'], [/(^|\.)(x|twitter)\.com/, 'X']];
+  const linkName = (url) => {
+    const hit = LINK_NAMES.find(([re]) => re.test(String(url).toLowerCase()));
+    if (hit) return hit[1];
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'Link'; }
+  };
+  const linkList = (c) => {
+    const out = (c.links || '').split('\n').map((x) => x.trim()).filter(Boolean);
+    if (c.instagram && !out.some((u) => /instagram\.com/i.test(u))) out.unshift(igUrl(c.instagram));
+    return out;
+  };
+  // The link that matches the lead source (Facebook source -> Facebook page), else the first one.
+  const sourceLink = (c) => {
+    const all = linkList(c); if (!all.length) return '';
+    const want = (c.source || '').toLowerCase().replace('google maps', 'google').replace('google search', 'google');
+    return all.find((u) => linkName(u).toLowerCase() === want) || all[0];
+  };
+  const linkChip = (u, rm) => `<span class="lchip lk-${esc(linkName(u).toLowerCase().replace(/[^a-z]/g, ''))}"><a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${esc(linkName(u))} ↗</a>${rm ? `<button type="button" data-rmlink="${esc(u)}" title="Remove link" aria-label="Remove ${esc(linkName(u))} link">×</button>` : ''}</span>`;
   const subline = (c) => [c.name && c.business ? c.name : '', fmtPhone(c.phone), c.instagram ? '@' + c.instagram : ''].filter(Boolean).join(' · ');
   const when = (iso) => {
     if (!iso) return '';
@@ -552,7 +573,7 @@
     return state.contacts.filter(def[2])
       .filter((c) => !state.channel || (state.channel === '(none)' ? !c.channel : c.channel === state.channel))
       .filter((c) => !state.source || (state.source === '(none)' ? !c.source : c.source === state.source))
-      .filter((c) => !q || [c.name, c.business, c.phone, c.email, c.instagram, c.notes, c.website].join(' ').toLowerCase().includes(q))
+      .filter((c) => !q || [c.name, c.business, c.phone, c.email, c.instagram, c.notes, c.website, c.links].join(' ').toLowerCase().includes(q))
       .sort(state.view === 'due' ? (a, b) => String(a.task_due).localeCompare(String(b.task_due)) : () => 0);
   }
   function renderChips() {
@@ -585,7 +606,7 @@
         <td><input class="cell mono" data-f="phone" type="tel" value="${esc(fmtPhone(c.phone))}" placeholder="-"></td>
         <td>${selectCell('channel', c.channel, chOpts, '-')}</td>
         <td class="c-status">${selectCell('stage', c.stage, stOpts)}</td>
-        <td>${selectCell('source', c.source, srcOpts, '-')}</td>
+        <td class="c-src"><div class="src-wrap">${selectCell('source', c.source, srcOpts, '-')}${sourceLink(c) ? `<a class="mini src-open" href="${esc(sourceLink(c))}" target="_blank" rel="noopener" title="Open ${esc(linkName(sourceLink(c)))}: ${esc(sourceLink(c))}" aria-label="Open ${esc(linkName(sourceLink(c)))} page">↗</a>` : `<button type="button" class="mini src-add" data-addlink="${c.id}" title="Add a source link">+ link</button>`}</div></td>
         <td class="c-date">${last ? esc(shortDate(last)) : '<span class="muted">-</span>'}${c.touches && !isDeal(c.stage) ? `<span class="touches" title="Messages sent with no reply">${c.touches}×</span>` : ''}</td>
         <td class="c-fu">${c.task_title ? `<button type="button" class="fu ${late ? 'late' : due ? 'today' : ''}" data-addtask="${c.id}" title="${esc(c.task_title)}">${c.task_due ? (c.task_due === t ? 'Today' : (late ? 'Overdue ' : '') + esc(shortDate(c.task_due))) : esc(c.task_title)}</button>` : `<button type="button" class="fu add" data-addtask="${c.id}" title="Add a follow-up">+ Add</button>`}</td>
         <td class="c-notes"><input class="cell" data-f="notes" value="${esc((c.notes || '').split('\n').pop())}" title="${esc(c.notes)}" placeholder="-"></td>
@@ -633,8 +654,12 @@
   async function saveCell(el) {
     const tr = el.closest('tr[data-id]'); if (!tr) return;
     const id = Number(tr.dataset.id); const c = state.contacts.find((x) => x.id === id); if (!c) return;
-    const f = el.dataset.f; let v = el.value.trim();
-    if (f === 'notes') {
+    let f = el.dataset.f; let v = el.value.trim();
+    if (f === 'addlink') {
+      if (!v) { renderTable(); return; }
+      const cur = (c.links || '').split('\n').filter(Boolean);
+      el.dataset.f = 'links'; f = 'links'; v = [...cur, v].join('\n');
+    } else if (f === 'notes') {
       // The cell holds the latest line of the notes; editing it replaces that line and keeps the rest.
       const lines = (c.notes || '').split('\n');
       if (v === lines[lines.length - 1]) return;
@@ -650,6 +675,12 @@
     } catch (err) { toast(err.message); renderTable(); }
     finally { tr.classList.remove('saving'); }
   }
+  $('contactRows').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-addlink]'); if (!b) return;
+    const inp = document.createElement('input');
+    inp.className = 'cell link-cell'; inp.dataset.f = 'addlink'; inp.placeholder = 'Paste link, Enter';
+    b.replaceWith(inp); inp.focus();
+  });
   $('contactRows').addEventListener('change', (e) => { if (e.target.matches('select.cell')) saveCell(e.target); });
   $('contactRows').addEventListener('focusout', (e) => { if (e.target.matches('input.cell')) saveCell(e.target); });
   $('contactRows').addEventListener('keydown', (e) => {
@@ -763,6 +794,8 @@
     $('touchText').textContent = early
       ? (c.touches ? `${c.touches} of ${state.me.maxTouches} messages sent${c.last_touch ? ', last ' + shortDate(c.last_touch) : ''}` : 'No outreach logged yet')
       : (c.last_touch ? `Last touch ${shortDate(c.last_touch)}` : 'Log a touch when you reach out');
+    $('recLinks').innerHTML = linkList(c).map((u) => linkChip(u, false)).join('');
+    $('linkChips').innerHTML = linkList(c).map((u) => linkChip(u, !/instagram\.com/i.test(u) || (c.links || '').includes(u))).join('') || '<span class="muted small">No links yet</span>';
     $('igBtn').classList.toggle('disabled', !c.instagram); $('igBtn').href = c.instagram ? igUrl(c.instagram) : '#';
     $('mailBtn').classList.toggle('disabled', !c.email); $('mailBtn').href = c.email ? `mailto:${c.email}` : '#';
     $('fName').value = c.name; $('fBusiness').value = c.business; $('fPhone').value = c.phone || '';
@@ -790,6 +823,27 @@
   $('qaNote').addEventListener('click', () => { setTab('activity'); $('noteInput').focus(); });
   $('qaText').addEventListener('click', () => { setTab('texts'); if (!$('msgInput').disabled) $('msgInput').focus(); });
   $('igBtn').addEventListener('click', (e) => { if ($('igBtn').classList.contains('disabled')) { e.preventDefault(); toast('No Instagram handle yet.'); } });
+  async function saveLinks(list) {
+    if (!state.current) return;
+    $('saveState').textContent = 'Saving…';
+    try {
+      const { contact } = await api(`/api/contacts/${state.current.id}`, { method: 'PATCH', body: { links: list.join('\n'), today: today() } });
+      state.current = contact; state.cache.set(contact.id, contact); state.sig.contacts = ''; fillContact(); $('saveState').textContent = 'Saved';
+    } catch (err) { $('saveState').textContent = ''; toast(err.message); }
+  }
+  const curLinks = () => (state.current.links || '').split('\n').filter(Boolean);
+  function addLinkFromInput() {
+    const v = $('linkInput').value.trim(); if (!v || !state.current) return;
+    $('linkInput').value = ''; saveLinks([...curLinks(), v]);
+  }
+  $('linkAddBtn').addEventListener('click', addLinkFromInput);
+  $('linkInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addLinkFromInput(); } });
+  $('linkChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rmlink]'); if (!b || !state.current) return;
+    const u = b.dataset.rmlink;
+    if (/instagram\.com/i.test(u) && !curLinks().includes(u)) { saveField('instagram', ''); return; }
+    saveLinks(curLinks().filter((x) => x !== u));
+  });
   $('mailBtn').addEventListener('click', (e) => { if ($('mailBtn').classList.contains('disabled')) { e.preventDefault(); toast('No email yet.'); } });
   $('toDealsBtn').addEventListener('click', () => { $('fStage').value = 'Interested'; saveField('stage', 'Interested'); });
   $('stageBar').addEventListener('click', (e) => {
